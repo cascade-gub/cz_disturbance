@@ -18,17 +18,31 @@ output:
     toc_float: true
     toc_depth: 3
     code_folding: hide
+    theme: darkly
+    highlight: breezedark
     fig_width: 10
     fig_caption: true
     self_contained: true
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      dev.args = list(bg = "#222222"))   # dark PNG canvas → matches darkly page
 suppressMessages({ library(dplyr); library(tidyr); library(readr); library(ggplot2)
                    library(knitr); library(patchwork) })
-theme_set(theme_bw(base_size = 11) +
-  theme(panel.grid.minor = element_blank(), legend.position = "bottom"))
+.pg <- "#222222"; .pn <- "#2b2b2b"; .fg <- "#e6e6e6"; .gr <- "#4d4d4d"   # dark plot palette
+theme_set(theme_bw(base_size = 11) + theme(
+  plot.background  = element_rect(fill = .pg, colour = NA),
+  panel.background = element_rect(fill = .pn, colour = NA),
+  panel.border     = element_rect(colour = .gr, fill = NA),
+  panel.grid.major = element_line(colour = .gr),
+  panel.grid.minor = element_blank(),
+  text = element_text(colour = .fg), axis.text = element_text(colour = .fg),
+  axis.ticks = element_line(colour = .gr),
+  legend.background = element_rect(fill = .pg, colour = NA),
+  legend.key = element_rect(fill = .pg, colour = NA),
+  strip.background = element_rect(fill = "#333333", colour = .gr),
+  strip.text = element_text(colour = .fg), legend.position = "bottom"))
 P <- 500   # generator period (steps); see CLAUDE.md. Only used to wrap phase lag into [0,P).
 # auto-incrementing figure counter (document order) — used in each chunk's fig.cap.
 fig_n <- local({ i <- 0L; function(x) { i <<- i + 1L; paste0("Figure ", i, ". ", x) } })
