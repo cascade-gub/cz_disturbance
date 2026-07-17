@@ -281,8 +281,8 @@ to a moments-only comparison and only exposed by the peak-spacing regularity.
 
 # Return
 
-Expectation: `pre` and `post` are the **same regime n** (the excursion peaks then recovers),
-so every moment and synchrony metric should match end-to-end.
+Expectation: `pre` and `post` are the **same regime n** (the response decouples into noise
+then recovers), so every moment and synchrony metric should match end-to-end.
 
 ```{r return-fig, fig.height=3.2, fig.cap=fig_n("Return — climate & log(response) over time, phases shaded (dashed = disturbance).")}
 plot_series(d_return, "Return — climate & log(response), phases shaded (dashed = disturbance)")

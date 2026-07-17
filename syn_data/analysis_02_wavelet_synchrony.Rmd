@@ -346,18 +346,20 @@ irregularity — a different fingerprint of the same decoupling.)
 
 # Return
 
-Expectation: the excursion peaks then recovers to **regime n**, so `pre` and `post` are the
-same regime — every band metric should match end-to-end.
+Expectation: the response **decouples into noise then recovers** to **regime n**, so `pre`
+and `post` are the same regime — every settled band metric should match end-to-end. The
+transition itself is a **transient decoupling** (like Desync, but recovering): the P≈500 band
+power dips then returns.
 
-```{r return-resid, fig.height=3.4, fig.cap=fig_n("Return — model residual (green) + derivative (orange, right axis), whole series; phases shaded, dashed = disturbance. Residual departs during the excursion (derivative spikes at onset and recovery) then settles back to ~0.")}
+```{r return-resid, fig.height=3.4, fig.cap=fig_n("Return — model residual (green) + derivative (orange, right axis), whole series; phases shaded, dashed = disturbance. Residual departs during the decoupling (derivative spikes at onset and recovery) then settles back to ~0.")}
 plot_resid(d_return, "Return — model residual & its derivative")
 ```
 
-```{r return-wc, fig.height=4.6, fig.cap=fig_n("Return — wavelet coherence spectrum. Coupling at the P≈500 band is maintained end-to-end; the transient excursion perturbs phase/power only within the transition window.")}
+```{r return-wc, fig.height=4.6, fig.cap=fig_n("Return — wavelet coherence spectrum. Coupling is coherent in pre and post (both regime n); within the transition the P≈500 band power dips as the response decouples into noise, then recovers — normalized coherence stays high (smoothing), as in Desync.")}
 plot_wc(wc_return, "Return — wavelet coherence")
 ```
 
-```{r return-trace, fig.height=5.2, fig.cap=fig_n("Return — band metrics through time. A transient wobble during the excursion, then all four metrics return to their pre values by the settled post window.")}
+```{r return-trace, fig.height=5.2, fig.cap=fig_n("Return — band metrics through time. Cross-power and amplitude ratio dip during the transition (transient decoupling — attenuated by Morlet smearing over the short window, so shallower than Desync's permanent collapse) while coherence stays high, then all four recover to their pre values by the settled post window.")}
 plot_band_trace(tr_return, "Return — synchrony at the P≈500 band, through time")
 ```
 
@@ -370,7 +372,8 @@ plot_wave_bars(sm_return, "Return — band metrics, pre vs post (±1 SE)")
 ```
 
 Read-off: pre ≈ post on all four band metrics — the disturbance leaves **no lasting wavelet
-signature**, matching analysis I's null result.
+signature** (matching analysis I's null result), even though the transition itself is a brief
+decoupling — a transient Desync that recovers.
 
 ---
 
@@ -384,6 +387,12 @@ regimes share `P`, so there is **no permanent** shift (post frequency returns ex
 the transition carries a **real** transient excursion — generator signal, not a numerical artifact.
 A ~16% excursion (period → ~430) sits *outside* the ±5% band, which is why the settled metrics
 correctly ignore it and a dedicated frequency read is needed to see it.
+
+Of the three scenarios **only Shift changes its lag** (50→10 through the adaptation). **Desync**
+and **Return** hold the lag fixed (`w = 0`), so neither chirps — their transitions register in
+*power*, not frequency (Desync a permanent P-band collapse, Return a transient dip that
+recovers). So this section has one positive example, Shift, with Desync and Return as no-chirp
+controls.
 
 Measured two ways and compared. **Measured:** instantaneous response period = the ridge (per-time
 argmax over period) of its wavelet amplitude. **Predicted, from the data:** recover the lag at the
@@ -413,8 +422,8 @@ win_lag <- function(df, sel) {
 
 # Predicted transition period from data-recovered endpoint lags. response(t)=climate(t−τ(t)) ⇒
 # f_out=f_in·(1−τ′) ⇒ period=P/(1−τ′). Monotonic transition ⇒ constant τ′=(lag_post−lag_pre)/W.
-# Only meaningful when endpoints differ (Shift); Return's endpoints match and Desync's post-lag is
-# noise, so those are shown measured-only.
+# Only meaningful when the lag actually changes (Shift); Return holds the lag fixed (w=0) and
+# Desync's post-lag is noise, so those are shown measured-only.
 chirp_predict <- function(df) {
   td <- df$time[df$phase == "disturbance"]
   tr <- df$time[df$phase == "transition"]; t0 <- min(tr); t1 <- max(tr); W <- length(tr)
@@ -449,16 +458,17 @@ plot_chirp <- function(wc, df, title, predict = TRUE) {
 plot_chirp(wc_shift, d_shift, "Shift — one chirp (lag 50→10)")
 ```
 
-```{r chirp-return, fig.height=3.4, fig.cap=fig_n("Return — two excursions: the response speeds up toward the peak then slows on the way back (period dips below then rises above P), re-settling at P. Endpoints are the same regime (lag ~50 both), so this two-limb signature lives entirely in the transition — invisible to any endpoint-based read; shown measured-only, and attenuated by Morlet smearing over the 500-step excursion.")}
-plot_chirp(wc_return, d_return, "Return — two chirps (lag 50→10→50)", predict = FALSE)
+```{r chirp-return, fig.height=3.4, fig.cap=fig_n("Return — no chirp: the lag is fixed at 50 throughout (w=0), so there is no frequency excursion. The P-band power only dips transiently while the response decouples into noise, so the ridge wanders where power is weakest inside the transition, then re-settles at P.")}
+plot_chirp(wc_return, d_return, "Return — no chirp (lag fixed at 50)", predict = FALSE)
 ```
 
 ```{r chirp-desync, fig.height=3.4, fig.cap=fig_n("Desync — no chirp: the lag never changes (w=0). Instead the response's P-band power collapses (cross-power trace above), so past the disturbance there is no coherent ridge — the argmax wanders. Prediction overlay omitted (recovered post-lag is meaningless on noise).")}
 plot_chirp(wc_desync, d_desync, "Desync — no chirp (power leaves the band)", predict = FALSE)
 ```
 
-Together: **Shift 1** excursion, **Return 2**, **Desync 0** — the frequency-domain signature of
-each scenario's lag trajectory, invisible to the fixed-band metrics and to a linear-scale read.
+Together: **Shift 1** chirp, **Desync 0**, **Return 0** — only Shift changes its lag (50→10).
+Desync and Return show no frequency excursion; their transitions register in *power* instead —
+Desync a permanent collapse, Return a transient dip that recovers.
 
 ---
 
@@ -499,7 +509,8 @@ ggplot(delta, aes(metric, delta, fill = metric)) +
 **Takeaways — the native wavelet view, next to analysis I.** The Morlet band reading pins the
 **Shift** cleanly: amplitude ratio and apparent lag move together (1.0→0.5, 50→10) while
 coherence holds — the same "coupled regime shift" analysis I inferred, but with a sharp,
-sub-step lag instead of a few-sample peak offset. **Return** is a flat null in both views. The
+sub-step lag instead of a few-sample peak offset. **Return** is a flat null in the settled view
+(its transition is a brief decoupling that fully recovers — a transient Desync). The
 instructive disagreement is **Desync**: the wavelet's *normalized* coherence is **fooled**
 (stays ≈1, and still hands back a phase/lag), so the decoupling reads only in the
 **un-normalized cross-power and band amplitude** collapsing to ≈0 — where analysis I saw it as

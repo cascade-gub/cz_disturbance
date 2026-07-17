@@ -36,11 +36,11 @@ driver; `response` is a **lagged, log-linear transform of the realized noisy cli
 `log(response) = β·climate(t − lag) + noise`, i.e. `response = R0·exp(…)` (strictly positive,
 right-skewed, amplifying large positive excursions of the driver).
 They differ in what the disturbance does to the terminal regime — **Shift** (permanent new
-regime), **Desync** (response decouples into noise), **Return** (transient excursion,
-recovers to regime n). The disturbance is a single time step marking the end of regime n —
+regime), **Desync** (response decouples into noise), **Return** (transient decoupling into
+noise, recovers to regime n). The disturbance is a single time step marking the end of regime n —
 annotated (dashed line) on plots **and** encoded in the export as an ordered `phase` column
 with four categories: `pre` (regime n, before the disturbance), `disturbance` (that single
-step), `transition` (the adaptation / decoupling / excursion window), `post` (the settled
+step), `transition` (the adaptation / decoupling window), `post` (the settled
 terminal regime). Because `log(response)` is a clean lagged copy of `climate`, overlay plots
 show **`climate` vs `log(response)`** on one axis, with a companion real-units response panel
 for the exp-scale shape.
@@ -80,9 +80,10 @@ log space**: `(1−w)·β_n·climate(t−lag_n) + w·β_p·climate(t−lag_p)`. 
 the crossfade is smooth and free of *spurious* chirps: both regimes share `P`, so frequency
 returns exactly to `P` after the transition. The lag change itself is **not** frequency-flat —
 shifting the delay `lag_n → lag_p` over a finite window is a Doppler shift,
-`f_out = f_in·(1 − dτ/dt)`, a transient excursion of magnitude ≈ `Δlag/window ≈ 16%` (Shift:
-one, speeds up; Return: two, out then back; Desync: none, `w=0`). This is the real kinematic
-signature of the lag change, not a numerical artifact. Because the lag is a plain index shift
+`f_out = f_in·(1 − dτ/dt)`, a transient excursion of magnitude ≈ `Δlag/window ≈ 16%` (only
+**Shift** changes its lag → one chirp, speeds up; **Desync & Return** hold the lag fixed at
+`w=0` → no chirp). This is the real kinematic signature of the lag change, not a numerical
+artifact. Because the lag is a plain index shift
 into the realized climate, climate is generated over an extended index (`lag_max` warm-up
 steps before t=1) so `climate(t−lag)` is always defined.
 Noise: climate carries a **constant 25%** linear baseline; response carries a **constant ≈5%
@@ -358,37 +359,46 @@ write_csv(d_desync %>% transmute(time, climate = round(climate, 6), response = r
 
 # Return
 
-Regime n → disturbance → single excursion toward n+1 that peaks then decays straight
-back to regime n. No sustained n+1. Additional disturbance noise strong at the
-disturbance, → 0 by the time the system re-settles in regime n.
+Regime n → disturbance → the response **degrades into noise** (signal gain dips 1→0 while
+additional log-space noise grows to regime-n matched variance, so at `pk = 2250` the response
+is momentarily pure noise, decoupled from climate) → then **recovers back to regime n** by
+`e1 = 2500`. A transient version of Desync: `w = 0` throughout (no parameter morph; regime n+1
+is never involved). Both ends are regime n.
 
 ```{r return-build}
 N   <- 2 * LEN_REG + 2 * LEN_ADAPT      # 4500
 t   <- seq_len(N)
 td  <- LEN_REG                          # disturbance
-pk  <- td + LEN_ADAPT                   # 2250 max excursion (params == n+1)
-e1  <- td + 2 * LEN_ADAPT               # 2500 back to regime n
+pk  <- td + LEN_ADAPT                   # 2250 max decoupling (signal fully faded to noise)
+e1  <- td + 2 * LEN_ADAPT               # 2500 recovered to regime n
 climate_ext <- make_climate(N)          # exogenous driver (extended for the lag warm-up)
 
-w   <- tri(t, td, pk, e1)               # 0 →1 at peak →0 (drives the sensitivity/lag blend)
+# transient version of Desync: regime-n log-moments to match at the trough, estimated from
+# climate_ext BEFORE build (add_* are build() inputs, so deriving from its output is circular).
+logsig_pre <- beta_n * clag(climate_ext, seq_len(td), lag_n)
+mu_lr <- mean(logsig_pre); sd_lr <- sqrt(var(logsig_pre) + base_sd^2)
 
-# additional disturbance noise on response: 30% at disturbance → 0 by re-settle (log space)
-add_sd_r <- (t > td & t <= e1) * dist_sd * ramp(t, td + 1, e1, 1, 0)
+dip      <- tri(t, td, pk, e1)                    # 0 →1 at pk →0 (decoupling weight)
+gain_r   <- 1 - dip                               # signal gain: 1 →0 at pk →1
+add_sd_r <- dip * sqrt(sd_lr^2 - base_sd^2)       # log-space noise: 0 →full →0
+add_mu_r <- dip * mu_lr                           # drift to regime-n log-mean at trough (≈0)
 
-d_return <- build(t, climate_ext, w, gain_r = 1, add_sd_r = add_sd_r) %>%
-  mutate(phase = phase_cat(time, td, e1))   # pre | disturbance (td) | transition (excursion) | post (back to regime n)
+# w = 0 throughout: NO parameter morph, regime n+1 never involved. Decoupling is carried
+# entirely by the signal gain dipping to 0 (response = matched-variance noise at pk) and back.
+d_return <- build(t, climate_ext, 0, gain_r = gain_r, add_sd_r = add_sd_r, add_mu_r = add_mu_r) %>%
+  mutate(phase = phase_cat(time, td, e1))   # pre | disturbance (td) | transition (degrade→noise→return) | post (regime n)
 ```
 
 ```{r return-plots, fig.height=12}
-# excursion peaks at n+1 params then returns; no sustained n+1 regime → both ends are regime n
+# response degrades into matched-variance noise at pk then recovers; regime n at both ends (w=0)
 ph_return <- tibble(xmin = c(1, td + 1, e1 + 1), xmax = c(td, e1, N), type = c("n", "adapt", "n"),
-                    label = c("Regime n", "Excursion", "Regime n"))
+                    label = c("Regime n", "Decoupling", "Regime n"))
 plot_series(d_return, "Regime n — climate & log(response)", xlim = c(1, 2 * P)) /
-plot_series(d_return, "Excursion — morph to n+1 at peak, back to n",
+plot_series(d_return, "Decoupling — response degrades to noise at peak, recovers to n",
             xlim = c(td - 2 * P, e1 + 2 * P), vlines = c(td, pk)) /
-plot_full(d_return, ph_return, "Full series — climate & log(response), phases shaded (dashed = disturbance, peak)", vlines = c(td, pk)) /
-plot_real(d_return, ph_return, "Response in real units — excursion then re-settle", vlines = c(td, pk)) /
-plot_addnoise(d_return, "Additional disturbance noise — response 30%→0 over excursion; climate none", vlines = c(td, pk))
+plot_full(d_return, ph_return, "Full series — climate & log(response), phases shaded (dashed = disturbance, max decoupling)", vlines = c(td, pk)) /
+plot_real(d_return, ph_return, "Response in real units — degrades to noise then re-settles", vlines = c(td, pk)) /
+plot_addnoise(d_return, "Additional noise from disturbance — response grows to regime-n variance at peak then 0; climate none", vlines = c(td, pk))
 ```
 
 ```{r return-export}

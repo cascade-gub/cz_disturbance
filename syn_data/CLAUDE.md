@@ -12,7 +12,7 @@ so analysis notebooks can be written against them without re-reading the generat
 |------|------|----------|
 | `synthetic_shift.csv`  | 4250 | **Shift** — permanent new regime |
 | `synthetic_desync.csv` | 4250 | **Desync** — response decouples into noise |
-| `synthetic_return.csv` | 4500 | **Return** — transient excursion, recovers |
+| `synthetic_return.csv` | 4500 | **Return** — transient decoupling into noise, recovers |
 
 `make_synthetic.Rmd` is the generator; `make_synthetic.html` is its knitted output.
 
@@ -33,7 +33,7 @@ Each row is one time step. Columns:
 - `phase` — ordered factor, one of `pre` → `disturbance` → `transition` → `post`:
   - `pre` — regime n, before the disturbance
   - `disturbance` — the **single** time step `td` marking the end of regime n
-  - `transition` — the adaptation / decoupling / excursion window after `td`
+  - `transition` — the adaptation / decoupling window after `td`
   - `post` — the settled terminal regime
 
 `climate`/`response` values are rounded to 6 decimals on export. The generator's internal
@@ -73,10 +73,11 @@ sensitivity+lag smoothly and free of *spurious* chirps: both regimes share `P`, 
 returns **exactly** to `P` after the transition. The lag change itself is **not**
 frequency-flat — shifting the delay `lag_n → lag_p` over a finite window is a Doppler shift,
 `f_out = f_in·(1 − dτ/dt)`, a **real transient frequency excursion** of magnitude ≈
-`Δlag/window ≈ 16%` (Shift: one excursion, speeds up; Return: two, out then back; Desync:
-none, `w=0`). This is the kinematic signature of the lag change, not a numerical artifact —
-frequency-domain analysis (e.g. wavelets) should read the transition-band feature as signal.
-The lag is a plain index shift into the realized `climate` (no lag-in-sine-argument).
+`Δlag/window ≈ 16%`. **Only Shift exercises this `w`-morph** (lag 50→10 → one chirp, speeds
+up); **Desync and Return hold `w = 0`** (no lag change → no chirp — their transitions are
+carried by the signal gain, not a morph). For Shift, frequency-domain analysis (e.g. wavelets)
+should read the transition-band chirp as signal, not a numerical artifact. The lag is a plain
+index shift into the realized `climate` (no lag-in-sine-argument).
 
 **Disturbance noise.** A separate time-varying Gaussian term added to `log(response)` only
 (so multiplicative in real units; climate is never disturbed). Its scale/mean profile differs
@@ -105,12 +106,15 @@ entirely by the fading gain, not a morph.
 - Phase bands: `pre [1,2000]` · `transition [2001,2250]` · `post [2251,4250]` (noise).
 
 ### Return — `synthetic_return.csv` (N = 4500)
-Regime n → disturbance at `td = 2000` → single excursion toward n+1 that **peaks at
-`pk = 2250` then decays straight back to regime n** by `e1 = 2500`. No sustained n+1: `w`
-is triangular (0→1 at peak→0). Additional response noise 30% at the disturbance → 0 by
-re-settle. Both ends are regime n.
-- Phase bands: `pre [1,2000]` · `transition [2001,2500]` (excursion, peak at 2250) ·
-  `post [2501,4500]` (back to regime n).
+A **transient version of Desync**. Regime n → disturbance at `td = 2000` → the response
+**degrades into noise**: the signal gain dips 1→0 while additional log-space noise grows to
+regime-n matched variance, so at `pk = 2250` the response is momentarily **pure
+(matched-variance) noise, decoupled from climate** → then **recovers back to regime n** by
+`e1 = 2500`. `w = 0` throughout — **no parameter morph; regime n+1 is never involved**. The
+excursion is carried entirely by the signal gain dipping and returning (`gain_r = 1 − tri`),
+mirroring Desync but transient. Both ends are regime n.
+- Phase bands: `pre [1,2000]` · `transition [2001,2500]` (degrade→noise→return, max
+  decoupling at 2250) · `post [2501,4500]` (regime n).
 
 ## Analysis notes / gotchas
 
