@@ -39,11 +39,11 @@
     <li><a href="analysis_02_wavelet_synchrony.html">Analysis II — wavelet synchrony</a>
       <span class="desc">Morlet coherence/cross-power at the P≈500 band, plus the transition Doppler chirp.</span></li>
   </ul>
-  <h2>Recent pushes</h2>
+  <h2>Changelog</h2>
   <p id="commits-status">Loading recent commits…</p>
   <table class="commits" id="commits-table" hidden>
     <thead>
-      <tr><th>When</th><th>Commit</th><th>Title</th></tr>
+      <tr><th>When</th><th>Commit</th><th>Author</th><th>Title</th></tr>
     </thead>
     <tbody></tbody>
   </table>
@@ -93,12 +93,17 @@
             td2.appendChild(a);
 
             var td3 = document.createElement("td");
-            td3.className = "msg";
-            td3.textContent = title;
+            td3.className = "author";
+            td3.textContent = (c.author && c.author.login) || c.commit.author.name || "—";
+
+            var td4 = document.createElement("td");
+            td4.className = "msg";
+            td4.textContent = title;
 
             tr.appendChild(td1);
             tr.appendChild(td2);
             tr.appendChild(td3);
+            tr.appendChild(td4);
             tbody.appendChild(tr);
           });
           status.hidden = true;
