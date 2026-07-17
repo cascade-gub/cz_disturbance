@@ -45,6 +45,16 @@ terminal regime). Because `log(response)` is a clean lagged copy of `climate`, o
 show **`climate` vs `log(response)`** on one axis, with a companion real-units response panel
 for the exp-scale shape.
 
+## Scenarios at a glance
+
+| Scenario | N | Trajectory | How `response` is built through the transition | Terminal state |
+|----------|--:|------------|------------------------------------------------|----------------|
+| **Shift**  | 4250 | regime n → **n+1**, permanent | `w` ramps 0→1 over `[2001,2250]` → parameters morph (sensitivity β 1.0→0.5, lag 50→10); disturbance noise decays 30%→0 | settled regime **n+1** |
+| **Desync** | 4250 | regime n → **noise**, permanent | `w = 0`; signal gain fades 1→0 over `[2001,2250]` while disturbance noise grows to regime-n matched variance | stationary **noise** (log-moments matched to regime n) |
+| **Return** | 4500 | regime n → **noise** → regime n | `w = 0`; signal gain dips 1→0→1 (trough at 2250, window `[2001,2500]`), disturbance noise peaks then →0 — a transient Desync | recovered regime **n** |
+
+All three share a single-step disturbance at `td = 2000` and the **same exogenous noisy `climate`** (only `response` is disturbed). Everywhere `response = R0·exp(β·climate(t − lag) + noise)`; **Shift** is the only scenario that morphs its parameters (`w > 0`), while **Desync** and **Return** hold `w = 0` and decouple via the signal gain (permanently vs transiently).
+
 ## Parameters
 
 ```{r params}

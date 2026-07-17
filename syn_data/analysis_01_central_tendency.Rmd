@@ -330,13 +330,15 @@ cat(kable(delta %>% select(dataset, metric, pre, post, delta), digits = 2,
           caption = "pre → post change in synchrony discriminators, all datasets"), sep = "\n")
 ```
 
-```{r summary-fig, fig.height=4, fig.cap=fig_n("Post − pre change in the synchrony discriminators, faceted by scenario on shared axes (so magnitudes compare directly across scenarios).")}
-ggplot(delta, aes(metric, delta, fill = metric)) +
+```{r summary-fig, fig.height=4, fig.cap=fig_n("Post − pre change per scenario, faceted by discriminator with free y axes (so scenarios compare within each metric — the three live on very different scales). Shift moves amp-ratio & lag; Desync spikes response-period sd; Return ≈ 0 everywhere.")}
+ggplot(delta, aes(dataset, delta, fill = dataset)) +
   geom_col() +
   geom_hline(yintercept = 0, colour = "grey50") +
-  facet_wrap(~ dataset) +                       # scales default "fixed" ⇒ shared axes across scenarios
+  facet_wrap(~ metric, scales = "free_y",       # free_y: these discriminators live on different scales
+             labeller = as_labeller(c(amp_ratio = "amp ratio", phase_lag = "phase lag",
+                                      period_resp_sd = "response-period sd"))) +
   scale_fill_brewer(palette = "Set2", guide = "none") +
-  labs(title = "Post − pre change by scenario (shared axes)", x = NULL, y = "post − pre") +
+  labs(title = "Post − pre change by discriminator (free y axes)", x = NULL, y = "post − pre") +
   theme(axis.text.x = element_text(angle = 30, hjust = 1))
 ```
 
