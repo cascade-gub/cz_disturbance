@@ -16,6 +16,16 @@
     a:hover { text-decoration: underline; }
     .desc { display: block; font-weight: 400; color: #777; font-size: .92rem; margin-top: .2rem; }
     footer { margin-top: 2.5rem; color: #888; font-size: .85rem; }
+    h2 { font-size: 1.1rem; margin-top: 2.5rem; margin-bottom: .4rem; }
+    table.commits { width: 100%; border-collapse: collapse; font-size: .88rem; }
+    table.commits th, table.commits td { text-align: left; padding: .45rem .5rem;
+           border-bottom: 1px solid #8883; vertical-align: top; }
+    table.commits th { color: #888; font-weight: 600; }
+    table.commits td.when { color: #888; white-space: nowrap; }
+    table.commits td.sha a { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+           font-weight: 400; font-size: .85rem; }
+    table.commits td.msg { font-weight: 400; }
+    #commits-status { color: #888; font-size: .88rem; }
   </style>
 </head>
 <body>
@@ -29,6 +39,75 @@
     <li><a href="analysis_02_wavelet_synchrony.html">Analysis II — wavelet synchrony</a>
       <span class="desc">Morlet coherence/cross-power at the P≈500 band, plus the transition Doppler chirp.</span></li>
   </ul>
+  <h2>Recent pushes</h2>
+  <p id="commits-status">Loading recent commits…</p>
+  <table class="commits" id="commits-table" hidden>
+    <thead>
+      <tr><th>When</th><th>Commit</th><th>Title</th></tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
   <footer>Rebuilt by knitting each report (or <code>Rscript build_docs.R</code>).</footer>
+
+  <script>
+    (function () {
+      var repo = "cascade-gub/cz_disturbance";
+      var status = document.getElementById("commits-status");
+      var table = document.getElementById("commits-table");
+      var tbody = table.querySelector("tbody");
+
+      function fmt(iso) {
+        var d = new Date(iso);
+        return d.toLocaleString(undefined, {
+          year: "numeric", month: "short", day: "numeric",
+          hour: "2-digit", minute: "2-digit"
+        });
+      }
+
+      fetch("https://api.github.com/repos/" + repo + "/commits?per_page=15", {
+        headers: { "Accept": "application/vnd.github+json" }
+      })
+        .then(function (r) {
+          if (!r.ok) throw new Error("GitHub API returned " + r.status);
+          return r.json();
+        })
+        .then(function (commits) {
+          if (!Array.isArray(commits) || commits.length === 0) {
+            status.textContent = "No commits found.";
+            return;
+          }
+          commits.forEach(function (c) {
+            var title = (c.commit.message || "").split("\n")[0];
+            var tr = document.createElement("tr");
+
+            var td1 = document.createElement("td");
+            td1.className = "when";
+            td1.textContent = fmt(c.commit.author.date);
+
+            var td2 = document.createElement("td");
+            td2.className = "sha";
+            var a = document.createElement("a");
+            a.href = c.html_url;
+            a.textContent = c.sha.slice(0, 7);
+            td2.appendChild(a);
+
+            var td3 = document.createElement("td");
+            td3.className = "msg";
+            td3.textContent = title;
+
+            tr.appendChild(td1);
+            tr.appendChild(td2);
+            tr.appendChild(td3);
+            tbody.appendChild(tr);
+          });
+          status.hidden = true;
+          table.hidden = false;
+        })
+        .catch(function (err) {
+          status.textContent = "Could not load recent commits (" + err.message + ").";
+        });
+    })();
+  </script>
 </body>
 </html>

@@ -1597,6 +1597,65 @@ copy of <code>climate</code>, overlay plots show
 <strong><code>climate</code> vs <code>log(response)</code></strong> on
 one axis, with a companion real-units response panel for the exp-scale
 shape.</p>
+<div id="scenarios-at-a-glance" class="section level2">
+<h2>Scenarios at a glance</h2>
+<table>
+<colgroup>
+<col width="11%" />
+<col width="3%" />
+<col width="13%" />
+<col width="53%" />
+<col width="17%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Scenario</th>
+<th align="right">N</th>
+<th>Trajectory</th>
+<th>How <code>response</code> is built through the transition</th>
+<th>Terminal state</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><strong>Shift</strong></td>
+<td align="right">4250</td>
+<td>regime n → <strong>n+1</strong>, permanent</td>
+<td><code>w</code> ramps 0→1 over <code>[2001,2250]</code> → parameters
+morph (sensitivity β 1.0→0.5, lag 50→10); disturbance noise decays
+30%→0</td>
+<td>settled regime <strong>n+1</strong></td>
+</tr>
+<tr class="even">
+<td><strong>Desync</strong></td>
+<td align="right">4250</td>
+<td>regime n → <strong>noise</strong>, permanent</td>
+<td><code>w = 0</code>; signal gain fades 1→0 over
+<code>[2001,2250]</code> while disturbance noise grows to regime-n
+matched variance</td>
+<td>stationary <strong>noise</strong> (log-moments matched to regime
+n)</td>
+</tr>
+<tr class="odd">
+<td><strong>Return</strong></td>
+<td align="right">4500</td>
+<td>regime n → <strong>noise</strong> → regime n</td>
+<td><code>w = 0</code>; signal gain dips 1→0→1 (trough at 2250, window
+<code>[2001,2500]</code>), disturbance noise peaks then →0 — a transient
+Desync</td>
+<td>recovered regime <strong>n</strong></td>
+</tr>
+</tbody>
+</table>
+<p>All three share a single-step disturbance at <code>td = 2000</code>
+and the <strong>same exogenous noisy <code>climate</code></strong> (only
+<code>response</code> is disturbed). Everywhere
+<code>response = R0·exp(β·climate(t − lag) + noise)</code>;
+<strong>Shift</strong> is the only scenario that morphs its parameters
+(<code>w &gt; 0</code>), while <strong>Desync</strong> and
+<strong>Return</strong> hold <code>w = 0</code> and decouple via the
+signal gain (permanently vs transiently).</p>
+</div>
 <div id="parameters" class="section level2">
 <h2>Parameters</h2>
 <pre class="r"><code>P       &lt;- 500                 # period, time steps. P≫lag ⇒ lag is a small phase fraction:
