@@ -338,7 +338,7 @@ plot_wave_bars(sm_desync, "Desync — band metrics, pre vs post (±1 SE)")
 Read-off: the key limitation of the **native** view — WaveletComp's *normalized, smoothed*
 coherence stays near 1 even though the response is noise, and a phase/lag is still numerically
 returned (with a huge SE). What actually registers the decoupling is the **un-normalized
-cross-power and the band amplitude ratio collapsing to ≈0**: the watershed no longer
+cross-power and the band amplitude ratio collapsing to ≈0**: the response no longer
 oscillates at the climate period. (Analysis I caught the same event via peak-spacing
 irregularity — a different fingerprint of the same decoupling.)
 
