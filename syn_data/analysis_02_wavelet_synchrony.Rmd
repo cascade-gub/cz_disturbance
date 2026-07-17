@@ -399,15 +399,14 @@ cat(kable(delta %>% transmute(dataset, metric = metric_labs[as.character(metric)
           digits = 2, caption = "pre → post change in band metrics, all datasets (delta_se = propagated ±1 SE)"), sep = "\n")
 ```
 
-```{r summary-fig, fig.height=4, fig.cap=fig_n("Post − pre change per band metric, faceted by scenario, ±1 propagated SE. Shift = amp-ratio & lag drop (coupled regime shift); Desync = cross-power & amp-ratio collapse (decoupling, invisible to coherence); Return = all Δ ≈ 0.")}
-ggplot(delta, aes(metric, delta, fill = metric)) +
+```{r summary-fig, fig.height=4, fig.cap=fig_n("Post − pre change per scenario, faceted by band metric with free y axes (so scenarios compare within each metric, not across metrics), ±1 propagated SE. Shift = amp-ratio & lag drop (coupled regime shift); Desync = cross-power & amp-ratio collapse (decoupling, invisible to coherence); Return = all Δ ≈ 0.")}
+ggplot(delta, aes(dataset, delta, fill = dataset)) +
   geom_col() +
   geom_errorbar(aes(ymin = delta - delta_se, ymax = delta + delta_se), width = 0.25, colour = "grey25", na.rm = TRUE) +
   geom_hline(yintercept = 0, colour = "grey50") +
-  facet_wrap(~ dataset) +
-  scale_x_discrete(labels = metric_labs) +
+  facet_wrap(~ metric, scales = "free_y", labeller = as_labeller(metric_labs)) +
   scale_fill_brewer(palette = "Set2", guide = "none") +
-  labs(title = "Post − pre change by scenario (±1 SE)", x = NULL, y = "post − pre") +
+  labs(title = "Post − pre change by band metric (free y axes; ±1 SE)", x = NULL, y = "post − pre") +
   theme(axis.text.x = element_text(angle = 30, hjust = 1))
 ```
 
