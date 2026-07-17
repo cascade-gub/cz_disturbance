@@ -17,7 +17,7 @@ output:
     toc: true
     toc_float: true
     toc_depth: 3
-    code_folding: show
+    code_folding: hide
     fig_width: 10
     self_contained: true
 ---
@@ -193,6 +193,51 @@ plot_addnoise <- function(df, title, vlines = numeric()) {
     scale_colour_manual(values = series_col) +
     labs(title = title, x = "time", y = "additional disturbance noise (log space)", colour = NULL)
 }
+```
+
+## Transfer function
+
+The response is built from a single static map applied to the lagged, realized climate —
+`response = R0·exp(β·climate(t − lag))` (multiplicative noise omitted here). The curve below
+*is* the climate → response relationship we picked: convex and strictly **positive** in real
+units (dry anomalies decay to a soft baseflow floor at `R0`; wet anomalies are amplified), and
+a **straight line of slope β in log space** — the sense in which the response is *log-linear*.
+The regime shift halves the slope (`β: 1.0 → 0.5`) and shortens the lag (`50 → 10`); everything
+else in the document is this map driven by the realized `climate` and morphed via `w`.
+
+```{r transfer-curve, fig.height=7, fig.cap="Static climate→response transfer function: response = R0·exp(β·climate_lag). Top: real units (convex, positive, amplifies wet extremes). Bottom: log space (straight line, slope = β). Noise omitted; the actual response adds multiplicative log-space noise and the lag."}
+suppressMessages(library(patchwork))
+
+# static transfer curve for each regime's sensitivity β (noise-free, lag folded in via climate_lag)
+lab_n  <- sprintf("regime n  (beta %.1f, lag %d)",  beta_n, lag_n)
+lab_p  <- sprintf("regime n+1 (beta %.1f, lag %d)", beta_p, lag_p)
+tf <- expand.grid(x = seq(-1.8, 1.8, length.out = 400), beta = c(beta_n, beta_p))
+tf$regime   <- factor(ifelse(tf$beta == beta_n, lab_n, lab_p), levels = c(lab_n, lab_p))
+tf$response <- R0 * exp(tf$beta * tf$x)          # real units
+tf$logresp  <- log(R0) + tf$beta * tf$x          # log space (straight, slope β)
+tf_col <- setNames(c("#6a51a3", "#fd8d3c"), c(lab_n, lab_p))
+
+base_layers <- list(geom_vline(xintercept = 0, linetype = 3, colour = "grey55"),
+                    scale_colour_manual(values = tf_col))
+
+pA <- ggplot(tf, aes(x, response, colour = regime)) +
+  geom_hline(yintercept = R0, linetype = 3, colour = "grey55") + base_layers +
+  geom_line(linewidth = 0.9) +
+  annotate("point", x = 0, y = R0, colour = "grey25", size = 1.8) +
+  annotate("text", x = -1.78, y = R0, label = "baseflow R0", hjust = 0, vjust = -0.6,
+           size = 3, colour = "grey30") +
+  labs(title = "Real units:  response = R0 · exp(beta · climate_lag)",
+       subtitle = "convex & strictly positive — dry → soft floor, wet → amplified",
+       x = "climate anomaly at t - lag", y = "response (flow)", colour = NULL)
+
+pB <- ggplot(tf, aes(x, logresp, colour = regime)) +
+  geom_hline(yintercept = log(R0), linetype = 3, colour = "grey55") + base_layers +
+  geom_line(linewidth = 0.9) +
+  labs(title = "Log space:  log(response) = beta · climate_lag  (straight, slope = beta)",
+       subtitle = "the 'log-linear' relationship the response is built on; slope halves n -> n+1",
+       x = "climate anomaly at t - lag", y = "log(response)", colour = NULL)
+
+pA / pB
 ```
 
 ---
