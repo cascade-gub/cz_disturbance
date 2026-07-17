@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Synthetic disturbance–response — reports</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { max-width: 46rem; margin: 3rem auto; padding: 0 1.2rem;
+           font: 16px/1.6 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+    h1 { font-size: 1.5rem; margin-bottom: .2rem; }
+    p.sub { color: #666; margin-top: 0; }
+    ul { list-style: none; padding: 0; }
+    li { margin: .9rem 0; padding: .9rem 1rem; border: 1px solid #8884; border-radius: 8px; }
+    a { text-decoration: none; font-weight: 600; }
+    a:hover { text-decoration: underline; }
+    .desc { display: block; font-weight: 400; color: #777; font-size: .92rem; margin-top: .2rem; }
+    footer { margin-top: 2.5rem; color: #888; font-size: .85rem; }
+  </style>
+</head>
+<body>
+  <h1>Synthetic disturbance–response datasets</h1>
+  <p class="sub">Idealized climate driver &amp; lagged watershed response across a regime shift.</p>
+  <ul>
+    <li><a href="make_synthetic.html">Data generator</a>
+      <span class="desc">How the three series are built (log-linear response, morph mechanism, per-scenario disturbance).</span></li>
+    <li><a href="analysis_01_central_tendency.html">Analysis I — central tendency &amp; peak synchrony</a>
+      <span class="desc">Log-space moments and peak-derived synchrony, pre vs post.</span></li>
+    <li><a href="analysis_02_wavelet_synchrony.html">Analysis II — wavelet synchrony</a>
+      <span class="desc">Morlet coherence/cross-power at the P≈500 band, plus the transition Doppler chirp.</span></li>
+  </ul>
+  <footer>Rebuilt by knitting each report (or <code>Rscript build_docs.R</code>).</footer>
+</body>
+</html>

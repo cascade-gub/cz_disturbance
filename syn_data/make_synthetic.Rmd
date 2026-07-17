@@ -3,6 +3,15 @@ title: "Synthetic disturbance–response series"
 subtitle: "Idealized climate driver & watershed response across a regime shift"
 author: "nic (nic@cascadeclimate.org)"
 date: "`r Sys.Date()`"
+# Knit → render in place, then copy the self-contained HTML to <repo-root>/docs for GitHub Pages.
+knit: |
+  (function(input, encoding) {
+    out  <- rmarkdown::render(input, encoding = encoding)
+    docs <- file.path(dirname(normalizePath(input)), "..", "docs")
+    dir.create(docs, showWarnings = FALSE, recursive = TRUE)
+    file.copy(out, docs, overwrite = TRUE)
+    out
+  })
 output:
   html_document:
     toc: true

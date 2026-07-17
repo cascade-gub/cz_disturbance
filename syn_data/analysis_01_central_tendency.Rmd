@@ -3,6 +3,15 @@ title: "Disturbance–response analysis I — central tendency, variance & peak 
 subtitle: "Simplest-possible pass: per-series moments + peak-derived synchrony, pre vs post"
 author: "nic (nic@cascadeclimate.org)"
 date: "`r Sys.Date()`"
+# Knit → render in place, then copy the self-contained HTML to <repo-root>/docs for GitHub Pages.
+knit: |
+  (function(input, encoding) {
+    out  <- rmarkdown::render(input, encoding = encoding)
+    docs <- file.path(dirname(normalizePath(input)), "..", "docs")
+    dir.create(docs, showWarnings = FALSE, recursive = TRUE)
+    file.copy(out, docs, overwrite = TRUE)
+    out
+  })
 output:
   html_document:
     toc: true
@@ -26,23 +35,25 @@ fig_n <- local({ i <- 0L; function(x) { i <<- i + 1L; paste0("Figure ", i, ". ",
 ```
 
 First, deliberately minimal, pass over the three synthetic series (`synthetic_{shift,desync,
-return}.csv`; design in `CLAUDE.md`). Two moves only: **(1)** quantify each channel
-(`climate`, `response`) with central-tendency and variance measures within the settled
-`pre` and `post` regimes; **(2)** turn those — plus peak spacings — into a description of
-**synchrony** (same rate? same strength? what delay?) and how it changes across the
-disturbance. No correlation coefficient, spectra, or wavelets — moments (incl. covariance)
-and peak spacings only.
+return}.csv`; design in `CLAUDE.md`). `response` is a lagged log-linear transform of climate,
+so every response statistic is taken on **`log(response)`**: there the signal is a clean lagged
+sinusoid with additive noise, whereas raw `response` is multiplicative / right-skewed and its
+moments conflate amplitude with skew. Two moves: **(1)** quantify each channel (`climate`,
+`log(response)`) with central-tendency and variance within the settled `pre`/`post` regimes;
+**(2)** turn those — plus peak spacings — into a description of **synchrony** (same rate? same
+strength? what delay?) across the disturbance. Moments (incl. covariance) and peak spacings
+only — no correlation coefficient, spectra, or wavelets.
 
 Per-*series* moments are blind to co-movement, so we add one **joint** moment —
-`cov(climate, response)` per regime, shown alongside the moments grid — plus three
-peak-derived synchrony quantities, each still just spacing/variance of local maxima:
+`cov(climate, log(response))` per regime — plus three peak-derived synchrony quantities:
 
 - **period** — mean spacing between successive peaks (per channel);
-- **amplitude ratio** — `sd(response)/sd(climate)` (a sinusoid of amplitude `A` has `sd = A/√2`);
-- **phase lag** — mean offset of each response peak behind the preceding climate peak.
+- **amplitude ratio** — `sd(log(response))/sd(climate) ≈ β` (in log space the signal is a clean
+  sinusoid, so `sd = A/√2` holds; on raw `response` it does not);
+- **phase lag** — mean offset of each `log(response)` peak behind the preceding climate peak.
 
-*Error-bar caveat: each settled window spans only ~4 cycles (3–5 peaks), so the peak-metric
-SEs rest on few samples — read them as relative, not exact.*
+*Error-bar caveat: each settled window spans ~4 cycles (3–5 peaks), so the peak-metric SEs rest
+on few samples — read them as relative, not exact.*
 
 ## Helpers
 
@@ -82,8 +93,8 @@ peak_offsets <- function(pc, pr) {
 se_mean  <- function(x) if (length(x) > 1) sd(x) / sqrt(length(x)) else NA_real_  # SE of a sample mean
 
 # covariance SE from per-cycle estimates: cut the window into P-long blocks, cov within each,
-# SE = sd(block covs)/√n_blocks. Honest under autocorrelation (iid cov SE would be far too narrow;
-# effective n is the ~4 cycles, not the ~2000 points). Mirrors the peak-metric SEs.
+# SE = sd(block covs)/√n_blocks. Valid under autocorrelation — an iid cov SE would be far too
+# narrow (effective n is the ~4 cycles, not the ~2000 points). Mirrors the peak-metric SEs.
 cov_se <- function(x, y) {
   blk <- (seq_along(x) - 1) %/% P
   cv  <- tapply(seq_along(x), blk, function(i) if (length(i) > 2) cov(x[i], y[i]) else NA_real_)
@@ -95,9 +106,9 @@ cov_se <- function(x, y) {
 # phase_lag_se) — reuses them, so callers never re-run find_peaks.
 # period_resp_sd = spacing irregularity: small ⇒ clean oscillation, large ⇒ decoupled/noise.
 sync_one <- function(sub) {
-  pc <- find_peaks(sub$climate); pr <- find_peaks(sub$response)
+  pc <- find_peaks(sub$climate); pr <- find_peaks(sub$log_response)   # response peaks in log space
   dpr <- diff(pr); off <- peak_offsets(pc, pr)      # spacings / offsets feed both value and SE
-  ac <- sd(sub$climate); ar <- sd(sub$response)     # each channel sd computed once
+  ac <- sd(sub$climate); ar <- sd(sub$log_response) # amp_response = sd(log R) ≈ β; sd computed once
   tibble(n = nrow(sub),
          period_climate     = mean(diff(pc)),
          period_response    = mean(dpr),
@@ -113,7 +124,7 @@ sync_one <- function(sub) {
 # tables + figure for one dataset, over the settled pre/post regimes (transition excluded).
 stats_by_period <- function(df)
   df %>% filter(phase %in% c("pre", "post")) %>%
-    pivot_longer(c(climate, response), names_to = "series") %>%
+    pivot_longer(c(climate, log_response), names_to = "series") %>%
     group_by(phase, series) %>% group_modify(~ series_stats(.x$value)) %>% ungroup() %>%
     mutate(phase = factor(phase, c("pre", "post"))) %>% arrange(phase, series)
 
@@ -132,10 +143,11 @@ plot_series <- function(df, title) {
     geom_rect(data = bands, aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf, fill = phase),
               alpha = 0.35, inherit.aes = FALSE) +
     geom_vline(xintercept = td, linetype = 2, colour = "grey30") +
-    geom_line(data = pivot_longer(df, c(climate, response), names_to = "var"),
+    geom_line(data = pivot_longer(df, c(climate, log_response), names_to = "var") %>%
+                mutate(var = recode(var, log_response = "log(response)")),
               aes(time, value, colour = var), linewidth = 0.3) +
     scale_fill_manual(values = phase_fill, guide = "none") +
-    scale_colour_manual(values = c(climate = "grey15", response = "#6a51a3")) +
+    scale_colour_manual(values = c(climate = "grey15", `log(response)` = "#6a51a3")) +
     labs(title = title, x = "time", y = "value", colour = NULL)
 }
 
@@ -155,11 +167,11 @@ plot_moments <- function(stats_x, df, title, errbar = FALSE) {   # central tende
     pivot_longer(c(mean, median, sd), names_to = "measure") %>%
     mutate(se = ifelse(measure == "mean", se_mean, NA_real_)) %>%
     select(phase, series, measure, value, se)
-  # joint moment: one cov(climate, response) per regime → own facet (single x category).
-  # per-cycle SE (see cov_se) so the covariance bar carries honest uncertainty too.
+  # joint moment: one cov(climate, log_response) per regime → own facet (single x category).
+  # per-cycle SE (see cov_se) — block SE, matching the other metrics.
   cov <- df %>% filter(phase %in% c("pre", "post")) %>% group_by(phase) %>%
-    summarise(value = cov(climate, response), se = cov_se(climate, response), .groups = "drop") %>%
-    mutate(phase = factor(phase, c("pre", "post")), series = "clim×resp", measure = "cov")
+    summarise(value = cov(climate, log_response), se = cov_se(climate, log_response), .groups = "drop") %>%
+    mutate(phase = factor(phase, c("pre", "post")), series = "clim×log(resp)", measure = "cov")
   long <- bind_rows(long, cov) %>%
     mutate(measure = factor(measure, c("mean", "median", "sd", "cov")))
   ggplot(long, aes(series, value, fill = phase)) +
@@ -191,9 +203,10 @@ plot_sync <- function(sync_x, title) {                  # peak-derived synchrony
 ```
 
 ```{r load}
-d_shift  <- read_csv("synthetic_shift.csv",  show_col_types = FALSE)
-d_desync <- read_csv("synthetic_desync.csv", show_col_types = FALSE)
-d_return <- read_csv("synthetic_return.csv", show_col_types = FALSE)
+# response is analyzed in log space (log-linear generator) → add log_response once at load.
+d_shift  <- read_csv("synthetic_shift.csv",  show_col_types = FALSE) %>% mutate(log_response = log(response))
+d_desync <- read_csv("synthetic_desync.csv", show_col_types = FALSE) %>% mutate(log_response = log(response))
+d_return <- read_csv("synthetic_return.csv", show_col_types = FALSE) %>% mutate(log_response = log(response))
 ```
 
 ```{r derive}
@@ -209,10 +222,11 @@ stats_return <- stats_by_period(d_return); sync_return <- sync_by_period(d_retur
 # Shift
 
 Expectation: still synchronous either side of the disturbance, but a **new regime** —
-response amplitude halves (`Ar 1.0→0.5`) and lag shortens (`50→10`); period unchanged (~P).
+response log-amplitude halves (`sd(log R)` ratio `1.0→0.5`, = β) and lag shortens (`50→10`);
+period unchanged (~P).
 
-```{r shift-fig, fig.height=3.2, fig.cap=fig_n("Shift — climate and response over time, phases shaded (dashed = disturbance).")}
-plot_series(d_shift, "Shift — climate & response, phases shaded (dashed = disturbance)")
+```{r shift-fig, fig.height=3.2, fig.cap=fig_n("Shift — climate & log(response) over time, phases shaded (dashed = disturbance).")}
+plot_series(d_shift, "Shift — climate & log(response), phases shaded (dashed = disturbance)")
 ```
 
 ```{r shift-tables, results='asis'}
@@ -229,19 +243,20 @@ cat(kable(sync_shift %>% select(-ends_with("_se")), digits = 2,   # SEs shown as
   plot_layout(heights = c(2, 1))   # 2×2 moments gets twice the height of the 1-row sync strip
 ```
 
-Read-off: amplitude ratio drops toward ~0.5 and phase lag from ~50 to ~10 while both periods
-stay ~P — a coherent **regime shift**, not a loss of coupling.
+Read-off: log-amplitude ratio drops toward ~0.5 (= β) and phase lag from ~50 to ~10 while both
+periods stay ~P — a coherent **regime shift**, not a loss of coupling.
 
 ---
 
 # Desync
 
-Expectation: `pre` synchronous; `post` response is stationary noise matched to regime-n
-response variance — so `amp_response` ≈ preserved, but peak spacing becomes **irregular**
-(`period_resp_sd` blows up) and phase lag is meaningless. Climate keeps its clean period.
+Expectation: `pre` synchronous; `post` `log(response)` is stationary Gaussian noise matched to
+regime-n log-variance — so `amp_response` (= sd(log R)) ≈ preserved, but peak spacing becomes
+**irregular** (`period_resp_sd` blows up) and phase lag is meaningless. Climate keeps its clean
+period.
 
-```{r desync-fig, fig.height=3.2, fig.cap=fig_n("Desync — climate and response over time, phases shaded (dashed = disturbance).")}
-plot_series(d_desync, "Desync — climate & response, phases shaded (dashed = disturbance)")
+```{r desync-fig, fig.height=3.2, fig.cap=fig_n("Desync — climate & log(response) over time, phases shaded (dashed = disturbance).")}
+plot_series(d_desync, "Desync — climate & log(response), phases shaded (dashed = disturbance)")
 ```
 
 ```{r desync-tables, results='asis'}
@@ -258,7 +273,7 @@ cat(kable(sync_desync %>% select(-ends_with("_se")), digits = 2,
   plot_layout(heights = c(2, 1))
 ```
 
-Read-off: `sd(response)` roughly holds across the disturbance, but response `period_resp_sd`
+Read-off: `sd(log(response))` roughly holds across the disturbance, but response `period_resp_sd`
 jumps and its period detaches from climate's — variance-preserving **decoupling**, invisible
 to a moments-only comparison and only exposed by the peak-spacing regularity.
 
@@ -269,8 +284,8 @@ to a moments-only comparison and only exposed by the peak-spacing regularity.
 Expectation: `pre` and `post` are the **same regime n** (the excursion peaks then recovers),
 so every moment and synchrony metric should match end-to-end.
 
-```{r return-fig, fig.height=3.2, fig.cap=fig_n("Return — climate and response over time, phases shaded (dashed = disturbance).")}
-plot_series(d_return, "Return — climate & response, phases shaded (dashed = disturbance)")
+```{r return-fig, fig.height=3.2, fig.cap=fig_n("Return — climate & log(response) over time, phases shaded (dashed = disturbance).")}
+plot_series(d_return, "Return — climate & log(response), phases shaded (dashed = disturbance)")
 ```
 
 ```{r return-tables, results='asis'}
