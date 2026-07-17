@@ -1,0 +1,412 @@
+---
+title: "Disturbance–response analysis II — wavelet synchrony (coherence, cross-power, phase → apparent lag, amplitude)"
+subtitle: "Robust signal-processing pass: Morlet wavelet at the P≈500 band, pre vs post — the native wavelet view, read against analysis I's moments + peaks"
+author: "nic (nic@cascadeclimate.org)"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    code_folding: hide
+    fig_width: 10
+    fig_caption: true
+    self_contained: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+if (!requireNamespace("WaveletComp", quietly = TRUE))                  # WaveletComp is required
+  stop("analysis_02 needs WaveletComp — install once with  install.packages('WaveletComp')")
+suppressMessages({ library(dplyr); library(tidyr); library(readr); library(ggplot2)
+                   library(knitr); library(patchwork); library(WaveletComp) })
+# Deterministic — no RNG / significance surrogates, so re-knits reproduce every number exactly.
+theme_set(theme_bw(base_size = 11) +
+  theme(panel.grid.minor = element_blank(), legend.position = "bottom"))
+P  <- 500              # generator period (steps); see CLAUDE.md. The band we read synchrony at.
+EF <- round(sqrt(2) * P)  # Morlet e-folding (~707) = time support at period P. Serves as both the
+                          # COI margin from the series ends and the buffer from each regime boundary
+                          # (so a settled-window average never straddles the disturbance/transition).
+fig_n <- local({ i <- 0L; function(x) { i <<- i + 1L; paste0("Figure ", i, ". ", x) } })
+```
+
+Analysis I described synchrony with **moments + peak spacings** over frozen `pre`/`post`
+windows — the simplest thing that works, but peak-finding frays on noisy/irregular signals
+and its lag is a coarse few-sample offset. This pass takes the **native wavelet view**: the
+Morlet wavelet (via **WaveletComp**) resolves synchrony jointly in **time and frequency**, so
+we can isolate the generator's `P≈500` band and watch coupling evolve *through* the
+disturbance, not just at the settled ends. Deliberately **different metrics** from analysis I
+— the point is to compare what each approach sees (there is no attempt to reproduce the
+peak-based numbers).
+
+Four band-localized quantities, all read at `P≈500` (the driver's period):
+
+- **Wavelet coherence** `∈[0,1]` — normalized (smoothed) coupling strength.
+- **Cross-wavelet power** — strength of *shared* oscillation at the band (un-normalized).
+- **Phase difference φ** (radians) — `Angle = phase.climate − phase.response`, the raw synchrony
+  phase; **climate leads ⇒ positive φ**. Shown in the tables alongside its step-unit form:
+- **Apparent lag** = `φ · P / (2π)` steps — φ rescaled to the interpretable "how many steps
+  behind" (the figures use this; the tables carry both).
+- **Amplitude ratio** — physical band amplitude `response / climate` (see the `×sd` note in
+  `band_trace`: WaveletComp standardizes each channel, so the raw amplitude ratio must be
+  rescaled back to physical units).
+
+*Two caveats carried throughout.* **(1) COI/edge:** at period `P` the Morlet spans
+`~±707` steps, so band metrics are only trustworthy `≥707` steps from a series end *and* from
+a regime boundary — settled averages use those buffered windows, and trace edges are blanked.
+**(2) Uncertainty:** the band series is heavily autocorrelated, so error bars use a
+**block SE** — one estimate per `P`-long cycle, `SE = dispersion/√n_blocks` (a *circular*
+dispersion for the phase, since linear sd on wrapped angles is invalid). The COI buffer leaves
+only **~2 cycles per settled window** (reported as `n_blocks`), so these SEs carry ~1 degree of
+freedom: read them as **coarse guides** to whether an effect clears its noise, not precise
+intervals. Shown next to each pre→post change so effect size is read against its uncertainty.
+
+## Helpers
+
+```{r helpers}
+# ---- small numerics -------------------------------------------------------------------------
+smooth_ma <- function(x, w = 51) as.numeric(stats::filter(x, rep(1 / w, w)))  # centered MA; NA at ±(w-1)/2 ends
+CMEAN     <- function(a) Arg(mean(exp(1i * a)))          # circular mean of angles (phase never averaged linearly)
+band_rows <- function(wc) which(abs(wc$Period - P) <= 0.05 * P)  # the few scale-rows within ±5% of P
+
+# wc.image styling is identical across all three scenario spectra — only the object + title vary.
+# color.key = "interval": linear 0→1 colour scale. ("quantile" warps it — coherence saturates
+# near 1, so quantile breaks bunch the legend into a 0/0.9/1 mess.)
+plot_wc <- function(wc, main)
+  wc.image(wc, which.image = "wc", plot.arrow = TRUE, plot.contour = FALSE,
+           color.key = "interval", timelab = "time", periodlab = "period",
+           legend.params = list(lab = "wavelet coherence"), main = main)
+
+# ---- WaveletComp wrapper --------------------------------------------------------------------
+# loess.span = 0: no detrend (series are trend-free) ⇒ standardization is exactly /sd(x), which
+#   makes the ×sd amplitude rescale in band_trace exact.
+# my.pair = climate,response ⇒ Angle = phase.climate − phase.response, so climate-leads is +.
+# make.pval = FALSE: skip significance surrogates — a valid 5% contour needs ≥100 (~30-50 min),
+#   and coherence saturates here so it would mislead. Uncertainty = COI + block SEs instead.
+# lowerPeriod/upperPeriod bracket P by ±1.5 octaves so the coupling ridge sits mid-axis in the
+#   coherence image (upper ≈ the series length limit, above which everything is COI). This also
+#   anchors the scale grid ~onto P — band metrics shift only in the last digit vs a [2,1024] grid.
+wco <- function(df)
+  analyze.coherency(as.data.frame(df[, c("climate", "response")]),
+                    my.pair = c("climate", "response"), loess.span = 0,
+                    dt = 1, dj = 1/20, lowerPeriod = P / 2^1.5, upperPeriod = P * 2^1.5,
+                    make.pval = FALSE, verbose = FALSE)
+
+# ---- collapse the wc object to one time-resolved series at the P band ------------------------
+band_trace <- function(wc, df) {
+  bi   <- band_rows(wc)
+  sd_c <- sd(df$climate); sd_r <- sd(df$response)          # the constants WaveletComp divided out (loess.span=0)
+  ang  <- apply(wc$Angle[bi, , drop = FALSE], 2, CMEAN)    # per-time band phase difference
+  tibble(time      = df$time,
+         phase     = df$phase,
+         coherence = colMeans(wc$Coherence[bi, , drop = FALSE]),
+         xpower    = colMeans(wc$Power.xy[bi, , drop = FALSE]),                 # shared-oscillation power at band
+         amp_ratio = colMeans(wc$Ampl.y[bi, , drop = FALSE]) /
+                     colMeans(wc$Ampl.x[bi, , drop = FALSE]) * (sd_r / sd_c),   # ×sd: undo per-channel standardization → physical ratio
+         angle     = ang,
+         lag       = ang / (2 * pi) * P,                                        # phase → steps
+         coi_ok    = df$time >= EF & df$time <= nrow(df) - EF)                  # trustworthy (outside COI) mask
+}
+
+# ---- settled pre/post summary with block SEs ------------------------------------------------
+# One estimate per P-long cycle in a COI-buffered window, then value ± dispersion/√n_blocks.
+# Valid under autocorrelation (a per-step SE would be far too narrow). `circ` uses a circular
+# dispersion — linear sd on wrapped angles is invalid (phases straddling ±π look far apart).
+# The COI buffer leaves only ~2 cycles per window, so n is tiny — SEs are coarse (see intro).
+block_stat <- function(t, v, circ = FALSE) {
+  b  <- (t - min(t)) %/% P
+  bv <- as.numeric(tapply(seq_along(t), b, function(i) if (circ) CMEAN(v[i]) else mean(v[i])))
+  n  <- length(bv)
+  if (circ) {
+    R    <- Mod(mean(exp(1i * bv)))                       # resultant length of block phases (1 = locked, 0 = scattered)
+    disp <- if (R < 1) sqrt(-2 * log(R)) else 0           # circular sd
+  } else disp <- sd(bv)
+  list(value = if (circ) CMEAN(bv) else mean(bv),
+       se    = if (n > 1) disp / sqrt(n) else NA_real_, n = n)
+}
+
+# Regime boundaries come from the `phase` column itself — one source of truth, so the settled
+# windows can't silently desync from the data (the disturbance step and transition span differ
+# by scenario; Return's transition runs to 2500, the others to 2250).
+wave_summary <- function(tr) {
+  td     <- tr$time[tr$phase == "disturbance"]            # the single disturbance step
+  tr_end <- max(tr$time[tr$phase == "transition"])        # last step of the transition span
+  N      <- max(tr$time)
+  wins <- list(pre  = tr$time >= EF          & tr$time <= td - EF,      # ≥ EF from series start AND from disturbance
+               post = tr$time >= tr_end + EF & tr$time <= N  - EF)      # ≥ EF from transition end AND from series end
+  one <- function(sel) {
+    t  <- tr$time[sel]
+    co <- block_stat(t, tr$coherence[sel]); xp <- block_stat(t, tr$xpower[sel])
+    ar <- block_stat(t, tr$amp_ratio[sel]); an <- block_stat(t, tr$angle[sel], circ = TRUE)
+    tibble(n_blocks  = co$n,                                            # cycles the SEs rest on (expect ~2)
+           coherence = co$value, coherence_se = co$se,
+           xpower    = xp$value, xpower_se    = xp$se,
+           amp_ratio = ar$value, amp_ratio_se = ar$se,
+           phi       = an$value,                 phi_se = an$se,          # phase difference φ, radians (circular SE)
+           lag       = an$value / (2*pi) * P, lag_se = an$se / (2*pi) * P)  # same φ in step units
+  }
+  bind_rows(pre = one(wins$pre), post = one(wins$post), .id = "phase") %>%
+    mutate(phase = factor(phase, c("pre", "post")))
+}
+
+# ---- model-based residual (whole series) ----------------------------------------------------
+# climate is the exogenous driver, response the dependent variable, so the residual is
+# response − predicted, where predicted = gain · climate(t − lag). lag & gain are fit on the
+# `pre` window only (cross-correlation peak + no-intercept OLS), NOT read from the generator,
+# so the residual sits at ~0 noise through pre and departs exactly where coupling changes.
+fit_pre <- function(df) {
+  pre <- df[df$phase == "pre", ]; cl <- pre$climate; rs <- pre$response; n <- length(rs)
+  Ls  <- 0:round(0.6 * P)                                              # physically plausible lags only (< ~0.6 period)
+  cr  <- vapply(Ls, function(L) cor(rs[(L + 1):n], cl[seq_len(n - L)]), numeric(1))  # cor(response(t), climate(t−L))
+  L   <- Ls[which.max(cr)]
+  x   <- cl[seq_len(n - L)]; y <- rs[(L + 1):n]
+  list(lag = L, gain = sum(x * y) / sum(x * x))                        # OLS slope, no intercept (channels ~zero-mean)
+}
+
+resid_trace <- function(df) {
+  fp <- fit_pre(df); L <- fp$lag; N <- nrow(df)
+  pred <- rep(NA_real_, N); if (L < N) pred[(L + 1):N] <- fp$gain * df$climate[seq_len(N - L)]
+  resid <- df$response - pred
+  out <- tibble(time = df$time, phase = df$phase,
+                resid  = resid,
+                dresid = c(NA, diff(smooth_ma(resid, 51))))            # smooth THEN diff so d/dt isn't pure noise
+  attr(out, "lag") <- L; attr(out, "gain") <- fp$gain; out
+}
+
+# ---- shared plotting furniture (band shading matches analysis I) ----------------------------
+phase_fill <- c(pre = "#9ecae1", disturbance = "grey45", transition = "#fcbba1", post = "#fdae6b")
+bar_fill   <- phase_fill[c("pre", "post")]                              # the bar plots reuse the pre/post band colours
+phase_bands <- function(ph) ph %>% filter(phase != "disturbance") %>%   # disturbance is one step → drawn as a line
+  group_by(phase) %>% summarise(xmin = min(time), xmax = max(time), .groups = "drop")
+
+# shared band shading: rect per phase + dashed disturbance line + fill scale.
+phase_band_layers <- function(d) {
+  bands <- phase_bands(d); td <- d$time[d$phase == "disturbance"]
+  list(geom_rect(data = bands, aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf, fill = phase),
+                 alpha = 0.30, inherit.aes = FALSE),
+       geom_vline(xintercept = td, linetype = 2, colour = "grey30"),
+       scale_fill_manual(values = phase_fill, guide = "none"))
+}
+
+# whole-series residual + its smoothed derivative on a secondary axis, phases shaded AND labelled.
+plot_resid <- function(df, title) {
+  rt <- resid_trace(df); L <- attr(rt, "lag"); g <- attr(rt, "gain")
+  bands <- phase_bands(df)                                             # kept for the phase labels below
+  ytop <- max(abs(rt$resid), na.rm = TRUE)
+  sc   <- ytop / max(abs(rt$dresid), na.rm = TRUE)                     # scale d/dt onto the residual axis (2nd axis un-scales it)
+  ggplot() +
+    phase_band_layers(df) +
+    geom_hline(yintercept = 0, colour = "grey60", linewidth = 0.3) +
+    geom_line(data = rt, aes(time, dresid * sc), colour = "#d94801", linewidth = 0.3, na.rm = TRUE) +
+    geom_line(data = rt, aes(time, resid),       colour = "#238b45", linewidth = 0.4, na.rm = TRUE) +
+    geom_text(data = mutate(bands, x = (xmin + xmax) / 2),
+              aes(x = x, y = ytop, label = phase), vjust = 1, size = 3, colour = "grey25") +
+    scale_y_continuous(sec.axis = sec_axis(~ . / sc, name = "d(residual)/dt  (smoothed, orange)")) +
+    labs(title = title, x = "time", y = "residual = response − predicted  (green)",
+         subtitle = sprintf("pre-fit predictor:  response(t) ≈ %.2f · climate(t − %d)", g, L))
+}
+
+# time-resolved band metrics; COI-contaminated edges blanked; phases shaded.
+metric_labs <- c(coherence = "coherence", xpower = "cross power", amp_ratio = "amp ratio", lag = "app. lag")
+plot_band_trace <- function(tr, title) {
+  m <- names(metric_labs)                                              # the four plotted metrics (single source)
+  long <- tr %>%
+    mutate(across(all_of(m), ~ ifelse(coi_ok, ., NA_real_))) %>%
+    select(time, all_of(m)) %>%
+    pivot_longer(-time, names_to = "metric") %>%
+    mutate(metric = factor(metric, m))
+  ggplot() +
+    phase_band_layers(tr) +
+    geom_line(data = long, aes(time, value), linewidth = 0.35, na.rm = TRUE) +
+    facet_wrap(~ metric, scales = "free_y", ncol = 1, strip.position = "left",
+               labeller = as_labeller(metric_labs)) +
+    labs(title = title, x = "time", y = NULL)
+}
+
+# reshape a summary tibble to long (id keys × metric × value × se), driven by metric_labs +
+# the regular `_se` naming — the one place the value↔se pairing lives. Used by the bars and summary.
+metrics_long <- function(sm, keys) {
+  m <- names(metric_labs)
+  val <- sm %>% select(all_of(c(keys, m))) %>%
+    pivot_longer(all_of(m), names_to = "metric", values_to = "value")
+  se  <- sm %>% select(all_of(c(keys, paste0(m, "_se")))) %>%
+    rename_with(~ sub("_se$", "", .x), all_of(paste0(m, "_se"))) %>%
+    pivot_longer(all_of(m), names_to = "metric", values_to = "se")
+  left_join(val, se, by = c(keys, "metric")) %>% mutate(metric = factor(metric, m))
+}
+
+# pre/post bars per metric, ±1 SE (block SE) so effect size is read against uncertainty.
+plot_wave_bars <- function(sm, title) {
+  dat <- metrics_long(sm, "phase")
+  ggplot(dat, aes(phase, value, fill = phase)) +
+    geom_col(width = 0.7) +
+    geom_errorbar(aes(ymin = value - se, ymax = value + se), width = 0.25, colour = "grey25", na.rm = TRUE) +
+    facet_wrap(~ metric, scales = "free_y", nrow = 1, labeller = as_labeller(metric_labs)) +
+    scale_fill_manual(values = bar_fill, guide = "none") +
+    labs(title = title, x = NULL, y = NULL)
+}
+
+# the settled pre/post table — same columns every scenario (adds n_blocks + phi, no _se).
+emit_table <- function(sm, caption)
+  cat(kable(sm %>% select(phase, n_blocks, coherence, xpower, amp_ratio, phi, lag),
+            digits = 2, caption = caption), sep = "\n")
+```
+
+```{r load}
+d_shift  <- read_csv("synthetic_shift.csv",  show_col_types = FALSE)
+d_desync <- read_csv("synthetic_desync.csv", show_col_types = FALSE)
+d_return <- read_csv("synthetic_return.csv", show_col_types = FALSE)
+```
+
+```{r derive}
+# One coherency transform per dataset → reused by every image, trace and table below.
+wc_shift  <- wco(d_shift);  tr_shift  <- band_trace(wc_shift,  d_shift);  sm_shift  <- wave_summary(tr_shift)
+wc_desync <- wco(d_desync); tr_desync <- band_trace(wc_desync, d_desync); sm_desync <- wave_summary(tr_desync)
+wc_return <- wco(d_return); tr_return <- band_trace(wc_return, d_return); sm_return <- wave_summary(tr_return)
+```
+
+---
+
+# Shift
+
+Expectation: coupling *survives* the disturbance but the regime changes — response amplitude
+halves (`Ar 1.0→0.5`) and lag shortens (`50→10`). Wavelet reading: coherence and cross-power
+stay high; **apparent lag drops ~50→10** and **amplitude ratio drops ~1.0→0.5**.
+
+```{r shift-resid, fig.height=3.4, fig.cap=fig_n("Shift — model residual (response − pre-fit prediction, green) over the whole series with its smoothed derivative (orange, right axis); phases shaded and labelled, dashed = disturbance. Flat ~0 through pre by construction; a new nonzero regime after the disturbance.")}
+plot_resid(d_shift, "Shift — model residual & its derivative")
+```
+
+```{r shift-wc, fig.height=4.6, fig.cap=fig_n("Shift — wavelet coherence spectrum (time × period). Arrows = phase (right = in-phase, down = climate leads); the pale COI parabola marks edge-unreliable regions. Coupling holds across the disturbance at the P≈500 band.")}
+plot_wc(wc_shift, "Shift — wavelet coherence")
+```
+
+```{r shift-trace, fig.height=5.2, fig.cap=fig_n("Shift — band (P≈500) metrics through time; COI edges blanked, phases shaded. Coherence & cross-power hold; apparent lag steps 50→10 and amplitude ratio 1.0→0.5 across the transition.")}
+plot_band_trace(tr_shift, "Shift — synchrony at the P≈500 band, through time")
+```
+
+```{r shift-table, results='asis'}
+emit_table(sm_shift, "Shift — band synchrony, settled pre vs post (n_blocks = cycles the SEs rest on; SEs as error bars)")
+```
+
+```{r shift-bars, fig.height=3, fig.cap=fig_n("Shift — pre vs post band metrics, ±1 SE (block SE). The amp-ratio halving and lag shortening dwarf their error bars; coherence/cross-power barely move — a coherent regime shift.")}
+plot_wave_bars(sm_shift, "Shift — band metrics, pre vs post (±1 SE)")
+```
+
+Read-off: amplitude ratio ≈ **1.0 → 0.5** and apparent lag ≈ **50 → 10** while coherence and
+cross-power stay high — the wavelet agrees with analysis I's "new regime, still coupled," and
+pins the lag change far more sharply than peak offsets could.
+
+---
+
+# Desync
+
+Expectation: `post` response is stationary noise matched to regime-n *variance* — so its
+energy leaves the `P` band and spreads across all scales. Wavelet reading: **cross-power and
+amplitude ratio at the band collapse**; note whether the *normalized* coherence follows.
+
+```{r desync-resid, fig.height=3.4, fig.cap=fig_n("Desync — model residual (green) + derivative (orange, right axis), whole series; phases shaded, dashed = disturbance. Residual is ~0 noise in pre, then becomes large and erratic as the response decouples into noise.")}
+plot_resid(d_desync, "Desync — model residual & its derivative")
+```
+
+```{r desync-wc, fig.height=4.6, fig.cap=fig_n("Desync — wavelet coherence spectrum (arrows = phase; pale COI parabola = edge-unreliable). Watch the P≈500 band after the disturbance: the smoothed coherence stays high (WaveletComp's smoothing is too narrow relative to scale, so coherence saturates toward 1 even over noise), so coherence alone does not flag the decoupling — cross-power does.")}
+plot_wc(wc_desync, "Desync — wavelet coherence")
+```
+
+```{r desync-trace, fig.height=5.2, fig.cap=fig_n("Desync — band metrics through time. Cross-power and amplitude ratio crash toward 0 after the disturbance while coherence stays high — the decoupling shows in POWER, not coherence.")}
+plot_band_trace(tr_desync, "Desync — synchrony at the P≈500 band, through time")
+```
+
+```{r desync-table, results='asis'}
+emit_table(sm_desync, "Desync — band synchrony, settled pre vs post (n_blocks = cycles the SEs rest on)")
+```
+
+```{r desync-bars, fig.height=3, fig.cap=fig_n("Desync — pre vs post band metrics, ±1 SE. Cross-power and amplitude ratio collapse (well beyond their SEs); coherence stays high and the apparent lag SE balloons (phase no longer stable) — its residual value is meaningless.")}
+plot_wave_bars(sm_desync, "Desync — band metrics, pre vs post (±1 SE)")
+```
+
+Read-off: the key limitation of the **native** view — WaveletComp's *normalized, smoothed*
+coherence stays near 1 even though the response is noise, and a phase/lag is still numerically
+returned (with a huge SE). What actually registers the decoupling is the **un-normalized
+cross-power and the band amplitude ratio collapsing to ≈0**: the watershed no longer
+oscillates at the climate period. (Analysis I caught the same event via peak-spacing
+irregularity — a different fingerprint of the same decoupling.)
+
+---
+
+# Return
+
+Expectation: the excursion peaks then recovers to **regime n**, so `pre` and `post` are the
+same regime — every band metric should match end-to-end.
+
+```{r return-resid, fig.height=3.4, fig.cap=fig_n("Return — model residual (green) + derivative (orange, right axis), whole series; phases shaded, dashed = disturbance. Residual departs during the excursion (derivative spikes at onset and recovery) then settles back to ~0.")}
+plot_resid(d_return, "Return — model residual & its derivative")
+```
+
+```{r return-wc, fig.height=4.6, fig.cap=fig_n("Return — wavelet coherence spectrum. Coupling at the P≈500 band is maintained end-to-end; the transient excursion perturbs phase/power only within the transition window.")}
+plot_wc(wc_return, "Return — wavelet coherence")
+```
+
+```{r return-trace, fig.height=5.2, fig.cap=fig_n("Return — band metrics through time. A transient wobble during the excursion, then all four metrics return to their pre values by the settled post window.")}
+plot_band_trace(tr_return, "Return — synchrony at the P≈500 band, through time")
+```
+
+```{r return-table, results='asis'}
+emit_table(sm_return, "Return — band synchrony, settled pre vs post (n_blocks = cycles the SEs rest on)")
+```
+
+```{r return-bars, fig.height=3, fig.cap=fig_n("Return — pre vs post band metrics, ±1 SE. Every metric matches within error — no lasting signature.")}
+plot_wave_bars(sm_return, "Return — band metrics, pre vs post (±1 SE)")
+```
+
+Read-off: pre ≈ post on all four band metrics — the disturbance leaves **no lasting wavelet
+signature**, matching analysis I's null result.
+
+---
+
+# Cross-dataset summary
+
+Post-minus-pre change in the four band metrics, per scenario, each Δ carrying its propagated
+SE (`√(se_pre² + se_post²)`) so the change is read against its uncertainty.
+
+```{r summary}
+sm_all <- bind_rows(Shift = sm_shift, Desync = sm_desync, Return = sm_return, .id = "dataset")
+
+# Long form (metric × value × se) via the shared reshape, then pre→post delta + propagated SE.
+delta <- metrics_long(sm_all, c("dataset", "phase")) %>%
+  pivot_wider(names_from = phase, values_from = c(value, se)) %>%
+  mutate(delta    = value_post - value_pre,
+         delta_se = sqrt(se_pre^2 + se_post^2),
+         dataset  = factor(dataset, c("Shift", "Desync", "Return")))
+```
+
+```{r summary-table, results='asis'}
+cat(kable(delta %>% transmute(dataset, metric = metric_labs[as.character(metric)],
+                              pre = value_pre, post = value_post, delta, delta_se),
+          digits = 2, caption = "pre → post change in band metrics, all datasets (delta_se = propagated ±1 SE)"), sep = "\n")
+```
+
+```{r summary-fig, fig.height=4, fig.cap=fig_n("Post − pre change per band metric, faceted by scenario, ±1 propagated SE. Shift = amp-ratio & lag drop (coupled regime shift); Desync = cross-power & amp-ratio collapse (decoupling, invisible to coherence); Return = all Δ ≈ 0.")}
+ggplot(delta, aes(metric, delta, fill = metric)) +
+  geom_col() +
+  geom_errorbar(aes(ymin = delta - delta_se, ymax = delta + delta_se), width = 0.25, colour = "grey25", na.rm = TRUE) +
+  geom_hline(yintercept = 0, colour = "grey50") +
+  facet_wrap(~ dataset) +
+  scale_x_discrete(labels = metric_labs) +
+  scale_fill_brewer(palette = "Set2", guide = "none") +
+  labs(title = "Post − pre change by scenario (±1 SE)", x = NULL, y = "post − pre") +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+```
+
+**Takeaways — the native wavelet view, next to analysis I.** The Morlet band reading pins the
+**Shift** cleanly: amplitude ratio and apparent lag move together (1.0→0.5, 50→10) while
+coherence holds — the same "coupled regime shift" analysis I inferred, but with a sharp,
+sub-step lag instead of a few-sample peak offset. **Return** is a flat null in both views. The
+instructive disagreement is **Desync**: the wavelet's *normalized* coherence is **fooled**
+(stays ≈1, and still hands back a phase/lag), so the decoupling reads only in the
+**un-normalized cross-power and band amplitude** collapsing to ≈0 — where analysis I saw it as
+peak-spacing irregularity. Two methods, two fingerprints of the same event: the lesson
+is that *coherence alone is not enough* — you need a power/amplitude channel to see a driver
+the response has stopped tracking (a significance test wouldn't rescue it: the saturated
+coherence would itself read as "significant").
+```

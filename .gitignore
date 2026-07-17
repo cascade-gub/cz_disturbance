@@ -1,0 +1,41 @@
+# ── R / RStudio ──────────────────────────────────────────────
+.Rproj.user/
+.Rhistory
+.Rapp.history
+.RData
+.Ruserdata
+*.Rproj
+
+# ── knitr / R Markdown build artifacts (regenerated on knit) ──
+*_cache/
+*_files/
+/cache/
+*.knit.md
+*.utf8.md
+
+# ── OS / editor cruft ────────────────────────────────────────
+.DS_Store
+Thumbs.db
+Desktop.ini
+.vscode/
+.idea/
+
+# ── Data ─────────────────────────────────────────────────────
+# Ignore ALL project data. The ONLY data kept in git is the three
+# synthetic disturbance–response CSVs, whitelisted at the bottom.
+data/
+ms_data/
+plots/
+zips/
+syn_data/pre_loglinear/
+*.zip
+*.pdf
+*.rds
+*.xlsx
+*.feather
+
+# CSVs: ignore every CSV, then re-include the three synthetic datasets.
+*.csv
+!syn_data/synthetic_shift.csv
+!syn_data/synthetic_desync.csv
+!syn_data/synthetic_return.csv

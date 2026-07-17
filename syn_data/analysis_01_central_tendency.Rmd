@@ -1,0 +1,332 @@
+---
+title: "Disturbance–response analysis I — central tendency, variance & peak synchrony"
+subtitle: "Simplest-possible pass: per-series moments + peak-derived synchrony, pre vs post"
+author: "nic (nic@cascadeclimate.org)"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    code_folding: hide
+    fig_width: 10
+    fig_caption: true
+    self_contained: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+suppressMessages({ library(dplyr); library(tidyr); library(readr); library(ggplot2)
+                   library(knitr); library(patchwork) })
+theme_set(theme_bw(base_size = 11) +
+  theme(panel.grid.minor = element_blank(), legend.position = "bottom"))
+P <- 500   # generator period (steps); see CLAUDE.md. Only used to wrap phase lag into [0,P).
+# auto-incrementing figure counter (document order) — used in each chunk's fig.cap.
+fig_n <- local({ i <- 0L; function(x) { i <<- i + 1L; paste0("Figure ", i, ". ", x) } })
+```
+
+First, deliberately minimal, pass over the three synthetic series (`synthetic_{shift,desync,
+return}.csv`; design in `CLAUDE.md`). Two moves only: **(1)** quantify each channel
+(`climate`, `response`) with central-tendency and variance measures within the settled
+`pre` and `post` regimes; **(2)** turn those — plus peak spacings — into a description of
+**synchrony** (same rate? same strength? what delay?) and how it changes across the
+disturbance. No correlation coefficient, spectra, or wavelets — moments (incl. covariance)
+and peak spacings only.
+
+Per-*series* moments are blind to co-movement, so we add one **joint** moment —
+`cov(climate, response)` per regime, shown alongside the moments grid — plus three
+peak-derived synchrony quantities, each still just spacing/variance of local maxima:
+
+- **period** — mean spacing between successive peaks (per channel);
+- **amplitude ratio** — `sd(response)/sd(climate)` (a sinusoid of amplitude `A` has `sd = A/√2`);
+- **phase lag** — mean offset of each response peak behind the preceding climate peak.
+
+*Error-bar caveat: each settled window spans only ~4 cycles (3–5 peaks), so the peak-metric
+SEs rest on few samples — read them as relative, not exact.*
+
+## Helpers
+
+```{r helpers}
+# centered moving average (window w); NA at the ±(w-1)/2 ends — used for peak-finding only.
+smooth_ma <- function(x, w = 51) as.numeric(stats::filter(x, rep(1 / w, w)))
+
+# local maxima of a smoothed copy, thinned greedily by height to a minimum separation `gap`.
+# Two noise defences: keep only candidates above the window mean (an oscillation peak sits above
+# its central tendency ⇒ drops trough-region ripples), then greedy gap≈0.6P ⇒ ≤1 peak/period.
+find_peaks <- function(x, w = 51, gap = 300) {
+  s <- smooth_ma(x, w); n <- length(s)
+  interior <- s[2:(n - 1)] > s[1:(n - 2)] & s[2:(n - 1)] >= s[3:n]
+  cand <- which(c(FALSE, interior, FALSE))            # NA comparisons drop out of which()
+  cand <- cand[s[cand] > mean(s, na.rm = TRUE)]       # peaks lie above central tendency
+  cand <- cand[order(s[cand], decreasing = TRUE)]     # tallest first
+  keep <- integer(0)
+  for (i in cand) if (all(abs(i - keep) >= gap)) keep <- c(keep, i)
+  sort(keep)
+}
+
+# per-channel moments: central tendency (mean, median) + spread (sd, var, IQR, range).
+series_stats <- function(x)
+  tibble(mean = mean(x), median = median(x), sd = sd(x),
+         var = var(x), IQR = IQR(x), range = diff(range(x)))
+
+# per-response-peak offset behind the preceding climate peak, wrapped into [0,P). Empty if either
+# channel has no peak. phase_lag = its mean; the vector also feeds the metric's standard error.
+peak_offsets <- function(pc, pr) {
+  if (!length(pc) || !length(pr)) return(numeric(0))
+  vapply(pr, function(tr) {
+    prior <- pc[pc <= tr]
+    d <- if (length(prior)) tr - max(prior) else tr - min(pc)
+    ((d %% P) + P) %% P
+  }, numeric(1))
+}
+se_mean  <- function(x) if (length(x) > 1) sd(x) / sqrt(length(x)) else NA_real_  # SE of a sample mean
+
+# covariance SE from per-cycle estimates: cut the window into P-long blocks, cov within each,
+# SE = sd(block covs)/√n_blocks. Honest under autocorrelation (iid cov SE would be far too narrow;
+# effective n is the ~4 cycles, not the ~2000 points). Mirrors the peak-metric SEs.
+cov_se <- function(x, y) {
+  blk <- (seq_along(x) - 1) %/% P
+  cv  <- tapply(seq_along(x), blk, function(i) if (length(i) > 2) cov(x[i], y[i]) else NA_real_)
+  se_mean(cv[is.finite(cv)])
+}
+
+# synchrony summary for one settled window (climate/response columns). Peaks are found ONCE here
+# and every derived quantity — including the mean-type standard errors (period_response_se,
+# phase_lag_se) — reuses them, so callers never re-run find_peaks.
+# period_resp_sd = spacing irregularity: small ⇒ clean oscillation, large ⇒ decoupled/noise.
+sync_one <- function(sub) {
+  pc <- find_peaks(sub$climate); pr <- find_peaks(sub$response)
+  dpr <- diff(pr); off <- peak_offsets(pc, pr)      # spacings / offsets feed both value and SE
+  ac <- sd(sub$climate); ar <- sd(sub$response)     # each channel sd computed once
+  tibble(n = nrow(sub),
+         period_climate     = mean(diff(pc)),
+         period_response    = mean(dpr),
+         period_response_se = se_mean(dpr),          # SE of the mean inter-peak interval
+         period_resp_sd     = sd(dpr),
+         amp_climate        = ac,
+         amp_response       = ar,
+         amp_ratio          = ar / ac,
+         phase_lag          = if (length(off)) mean(off) else NA_real_,
+         phase_lag_se       = se_mean(off))          # SE of the mean per-peak offset
+}
+
+# tables + figure for one dataset, over the settled pre/post regimes (transition excluded).
+stats_by_period <- function(df)
+  df %>% filter(phase %in% c("pre", "post")) %>%
+    pivot_longer(c(climate, response), names_to = "series") %>%
+    group_by(phase, series) %>% group_modify(~ series_stats(.x$value)) %>% ungroup() %>%
+    mutate(phase = factor(phase, c("pre", "post"))) %>% arrange(phase, series)
+
+sync_by_period <- function(df)
+  bind_rows(pre  = sync_one(filter(df, phase == "pre")),
+            post = sync_one(filter(df, phase == "post")), .id = "phase") %>%
+    mutate(phase = factor(phase, c("pre", "post")))
+
+# contiguous phase spans → shaded background bands (disturbance is a single step, drawn as a line).
+phase_fill <- c(pre = "#9ecae1", disturbance = "grey45", transition = "#fcbba1", post = "#fdae6b")
+plot_series <- function(df, title) {
+  bands <- df %>% filter(phase != "disturbance") %>% group_by(phase) %>%
+    summarise(xmin = min(time), xmax = max(time), .groups = "drop")
+  td <- df$time[df$phase == "disturbance"]
+  ggplot() +
+    geom_rect(data = bands, aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf, fill = phase),
+              alpha = 0.35, inherit.aes = FALSE) +
+    geom_vline(xintercept = td, linetype = 2, colour = "grey30") +
+    geom_line(data = pivot_longer(df, c(climate, response), names_to = "var"),
+              aes(time, value, colour = var), linewidth = 0.3) +
+    scale_fill_manual(values = phase_fill, guide = "none") +
+    scale_colour_manual(values = c(climate = "grey15", response = "#6a51a3")) +
+    labs(title = title, x = "time", y = "value", colour = NULL)
+}
+
+# bar companions to the two tables; pre/post reuse the phase-band fills. free_y scales
+# because metrics live on different units (amp ~1, period ~500, lag ~10s).
+bar_fill <- c(pre = "#9ecae1", post = "#fdae6b")
+# errbar=TRUE overlays ±1 SE (sd/√n) on the mean facet only. NB with autocorrelated series
+# the iid SE is optimistic (too narrow); here it still dwarfs the ~0 means → not distinguishable.
+# takes the precomputed stats tibble (stats_by_period) so the moments grid isn't recomputed;
+# cov/n are still derived from df (not duplicated elsewhere).
+plot_moments <- function(stats_x, df, title, errbar = FALSE) {   # central tendency + spread, per channel
+  st <- stats_x %>% select(phase, series, mean, median, sd)
+  nn <- df %>% filter(phase %in% c("pre", "post")) %>% count(phase, name = "n")   # rows per window
+  # se lives on the wide table (sd/√n), tagged onto the mean rows after the pivot — no self-join.
+  long <- st %>% left_join(nn, by = "phase") %>%
+    mutate(se_mean = sd / sqrt(n)) %>%
+    pivot_longer(c(mean, median, sd), names_to = "measure") %>%
+    mutate(se = ifelse(measure == "mean", se_mean, NA_real_)) %>%
+    select(phase, series, measure, value, se)
+  # joint moment: one cov(climate, response) per regime → own facet (single x category).
+  # per-cycle SE (see cov_se) so the covariance bar carries honest uncertainty too.
+  cov <- df %>% filter(phase %in% c("pre", "post")) %>% group_by(phase) %>%
+    summarise(value = cov(climate, response), se = cov_se(climate, response), .groups = "drop") %>%
+    mutate(phase = factor(phase, c("pre", "post")), series = "clim×resp", measure = "cov")
+  long <- bind_rows(long, cov) %>%
+    mutate(measure = factor(measure, c("mean", "median", "sd", "cov")))
+  ggplot(long, aes(series, value, fill = phase)) +
+    geom_col(position = position_dodge(0.8), width = 0.7) +
+    { if (errbar) geom_errorbar(aes(ymin = value - se, ymax = value + se),
+        position = position_dodge(0.8), width = 0.25, colour = "grey25", na.rm = TRUE) } +
+    facet_wrap(~ measure, scales = "free") +   # free x too: cov facet has its own single category
+    scale_fill_manual(values = bar_fill) +
+    labs(title = title, x = NULL, y = NULL, fill = NULL)
+}
+
+# takes the precomputed sync tibble (sync_by_period), which already carries the mean-type SEs
+# (period_response_se, phase_lag_se) — so peaks are never re-found for the error bars.
+plot_sync <- function(sync_x, title) {                  # peak-derived synchrony discriminators
+  se_long <- sync_x %>%                                 # SE only for the mean-type metrics
+    transmute(phase, period_response = period_response_se, phase_lag = phase_lag_se) %>%
+    pivot_longer(-phase, names_to = "metric", values_to = "se")
+  dat <- sync_x %>% select(phase, period_response, amp_ratio, phase_lag, period_resp_sd) %>%
+    pivot_longer(-phase, names_to = "metric") %>%
+    left_join(se_long, by = c("phase", "metric")) %>%   # amp_ratio & period_resp_sd → NA (no SE)
+    mutate(metric = factor(metric, c("period_response", "amp_ratio", "phase_lag", "period_resp_sd")))
+  ggplot(dat, aes(phase, value, fill = phase)) +
+    geom_col(width = 0.7) +
+    geom_errorbar(aes(ymin = value - se, ymax = value + se), width = 0.25, colour = "grey25", na.rm = TRUE) +
+    facet_wrap(~ metric, scales = "free_y", nrow = 1) +
+    scale_fill_manual(values = bar_fill, guide = "none") +
+    labs(title = title, x = NULL, y = NULL)
+}
+```
+
+```{r load}
+d_shift  <- read_csv("synthetic_shift.csv",  show_col_types = FALSE)
+d_desync <- read_csv("synthetic_desync.csv", show_col_types = FALSE)
+d_return <- read_csv("synthetic_return.csv", show_col_types = FALSE)
+```
+
+```{r derive}
+# Each dataset's moment / synchrony summaries are computed ONCE here (find_peaks runs a single
+# time per window) and reused by every table, figure, and the cross-dataset summary below.
+stats_shift  <- stats_by_period(d_shift);  sync_shift  <- sync_by_period(d_shift)
+stats_desync <- stats_by_period(d_desync); sync_desync <- sync_by_period(d_desync)
+stats_return <- stats_by_period(d_return); sync_return <- sync_by_period(d_return)
+```
+
+---
+
+# Shift
+
+Expectation: still synchronous either side of the disturbance, but a **new regime** —
+response amplitude halves (`Ar 1.0→0.5`) and lag shortens (`50→10`); period unchanged (~P).
+
+```{r shift-fig, fig.height=3.2, fig.cap=fig_n("Shift — climate and response over time, phases shaded (dashed = disturbance).")}
+plot_series(d_shift, "Shift — climate & response, phases shaded (dashed = disturbance)")
+```
+
+```{r shift-tables, results='asis'}
+cat(kable(stats_shift, digits = 3,
+          caption = "Shift — per-channel moments, settled regimes"), sep = "\n")
+cat("\n\n")
+cat(kable(sync_shift %>% select(-ends_with("_se")), digits = 2,   # SEs shown as error bars, not in table
+          caption = "Shift — peak-derived synchrony, pre vs post"), sep = "\n")
+```
+
+```{r shift-bars, fig.height=8, fig.cap=fig_n("Shift — per-channel moments + joint covariance (top) and peak-derived synchrony metrics (bottom), pre vs post. Error bars = ±1 SE: channel mean and peak metrics (period, phase lag) from their sample spread, covariance from per-cycle estimates; sd / median / amp ratio / period-sd have none.")}
+(plot_moments(stats_shift, d_shift, "Shift — moments by channel, pre vs post", errbar = TRUE) /
+ plot_sync(sync_shift, "Shift — synchrony metrics, pre vs post")) +
+  plot_layout(heights = c(2, 1))   # 2×2 moments gets twice the height of the 1-row sync strip
+```
+
+Read-off: amplitude ratio drops toward ~0.5 and phase lag from ~50 to ~10 while both periods
+stay ~P — a coherent **regime shift**, not a loss of coupling.
+
+---
+
+# Desync
+
+Expectation: `pre` synchronous; `post` response is stationary noise matched to regime-n
+response variance — so `amp_response` ≈ preserved, but peak spacing becomes **irregular**
+(`period_resp_sd` blows up) and phase lag is meaningless. Climate keeps its clean period.
+
+```{r desync-fig, fig.height=3.2, fig.cap=fig_n("Desync — climate and response over time, phases shaded (dashed = disturbance).")}
+plot_series(d_desync, "Desync — climate & response, phases shaded (dashed = disturbance)")
+```
+
+```{r desync-tables, results='asis'}
+cat(kable(stats_desync, digits = 3,
+          caption = "Desync — per-channel moments, settled regimes"), sep = "\n")
+cat("\n\n")
+cat(kable(sync_desync %>% select(-ends_with("_se")), digits = 2,
+          caption = "Desync — peak-derived synchrony, pre vs post"), sep = "\n")
+```
+
+```{r desync-bars, fig.height=8, fig.cap=fig_n("Desync — per-channel moments + joint covariance (top) and peak-derived synchrony metrics (bottom), pre vs post. Error bars = ±1 SE: channel mean and peak metrics (period, phase lag) from their sample spread, covariance from per-cycle estimates; sd / median / amp ratio / period-sd have none.")}
+(plot_moments(stats_desync, d_desync, "Desync — moments by channel, pre vs post", errbar = TRUE) /
+ plot_sync(sync_desync, "Desync — synchrony metrics, pre vs post")) +
+  plot_layout(heights = c(2, 1))
+```
+
+Read-off: `sd(response)` roughly holds across the disturbance, but response `period_resp_sd`
+jumps and its period detaches from climate's — variance-preserving **decoupling**, invisible
+to a moments-only comparison and only exposed by the peak-spacing regularity.
+
+---
+
+# Return
+
+Expectation: `pre` and `post` are the **same regime n** (the excursion peaks then recovers),
+so every moment and synchrony metric should match end-to-end.
+
+```{r return-fig, fig.height=3.2, fig.cap=fig_n("Return — climate and response over time, phases shaded (dashed = disturbance).")}
+plot_series(d_return, "Return — climate & response, phases shaded (dashed = disturbance)")
+```
+
+```{r return-tables, results='asis'}
+cat(kable(stats_return, digits = 3,
+          caption = "Return — per-channel moments, settled regimes"), sep = "\n")
+cat("\n\n")
+cat(kable(sync_return %>% select(-ends_with("_se")), digits = 2,
+          caption = "Return — peak-derived synchrony, pre vs post"), sep = "\n")
+```
+
+```{r return-bars, fig.height=8, fig.cap=fig_n("Return — per-channel moments + joint covariance (top) and peak-derived synchrony metrics (bottom), pre vs post. Error bars = ±1 SE: channel mean and peak metrics (period, phase lag) from their sample spread, covariance from per-cycle estimates; sd / median / amp ratio / period-sd have none.")}
+(plot_moments(stats_return, d_return, "Return — moments by channel, pre vs post", errbar = TRUE) /
+ plot_sync(sync_return, "Return — synchrony metrics, pre vs post")) +
+  plot_layout(heights = c(2, 1))
+```
+
+Read-off: pre ≈ post on every measure — the disturbance leaves **no lasting signature** in
+these statistics.
+
+---
+
+# Cross-dataset summary
+
+Post-minus-pre change in the two synchrony discriminators. Shift moves amplitude ratio and
+lag together; Desync spikes response-period irregularity; Return sits at the origin.
+
+```{r summary, fig.height=4}
+sync_all <- bind_rows(Shift = sync_shift, Desync = sync_desync,   # reuse the summaries from `derive`
+                      Return = sync_return, .id = "dataset")
+
+# pre→post deltas of the discriminating metrics
+delta <- sync_all %>%
+  select(dataset, phase, amp_ratio, phase_lag, period_resp_sd) %>%
+  pivot_longer(c(amp_ratio, phase_lag, period_resp_sd), names_to = "metric") %>%
+  pivot_wider(names_from = phase, values_from = value) %>%
+  mutate(delta = post - pre,
+         dataset = factor(dataset, c("Shift", "Desync", "Return")))
+```
+
+```{r summary-table, results='asis'}
+cat(kable(delta %>% select(dataset, metric, pre, post, delta), digits = 2,
+          caption = "pre → post change in synchrony discriminators, all datasets"), sep = "\n")
+```
+
+```{r summary-fig, fig.height=4, fig.cap=fig_n("Post − pre change in the synchrony discriminators, faceted by scenario on shared axes (so magnitudes compare directly across scenarios).")}
+ggplot(delta, aes(metric, delta, fill = metric)) +
+  geom_col() +
+  geom_hline(yintercept = 0, colour = "grey50") +
+  facet_wrap(~ dataset) +                       # scales default "fixed" ⇒ shared axes across scenarios
+  scale_fill_brewer(palette = "Set2", guide = "none") +
+  labs(title = "Post − pre change by scenario (shared axes)", x = NULL, y = "post − pre") +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+```
+
+**Takeaways.** With nothing but moments and peak spacings: **Shift** = amplitude ratio and
+lag shift while period holds (new regime, still coupled); **Desync** = response-period
+irregularity spikes while variance is preserved (decoupling); **Return** = all deltas ≈ 0
+(full recovery). The moments-only view alone would miss Desync — the peak-spacing regularity
+is what separates "different regime" from "no regime."

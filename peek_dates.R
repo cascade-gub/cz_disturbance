@@ -1,0 +1,5 @@
+suppressMessages({library(readxl); library(dplyr)})
+rec <- read_excel("disturbance_record.xlsx", sheet = "Sheet1")
+bad <- rec %>% filter(!is.na(start_date), is.na(suppressWarnings(as.numeric(start_date))))
+cat("non-numeric start_date rows:", nrow(bad), "\n")
+print(as.data.frame(bad %>% select(domain, site_code, disturbance_def, start_date, end_date)))

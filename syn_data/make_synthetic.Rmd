@@ -1,0 +1,341 @@
+---
+title: "Synthetic disturbance–response series"
+subtitle: "Idealized climate driver & watershed response across a regime shift"
+author: "nic (nic@cascadeclimate.org)"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    code_folding: show
+    fig_width: 10
+    self_contained: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+suppressMessages({ library(dplyr); library(tidyr); library(readr); library(ggplot2) })
+theme_set(theme_bw(base_size = 11) +
+  theme(panel.grid.minor = element_blank(), legend.position = "bottom"))
+set.seed(42)          # whole-document reproducibility; datasets draw sequentially
+OUT_DIR <- "."        # knit dir == this file's dir → CSVs land in syn_data/
+```
+
+Three idealized series, each `time / climate / response`. `climate` is the exogenous
+driver (∼precip); `response` (∼Q) is a **lagged, log-linear transform of the realized noisy
+climate** — `log(response) = β·climate(t − lag) + noise`, i.e. `response = R0·exp(…)` (the
+standard streamflow model: strictly positive, amplifies wet extremes, hydrograph-shaped).
+They differ in what the disturbance does to the terminal regime — **Shift** (permanent new
+regime), **Desync** (response decouples into noise), **Return** (transient excursion,
+recovers to regime n). The disturbance is a single time step marking the end of regime n —
+annotated (dashed line) on plots **and** encoded in the export as an ordered `phase` column
+with four categories: `pre` (regime n, before the disturbance), `disturbance` (that single
+step), `transition` (the adaptation / decoupling / excursion window), `post` (the settled
+terminal regime). Because `log(response)` is a clean lagged copy of `climate`, overlay plots
+show **`climate` vs `log(response)`** on one axis, with a companion real-units response panel
+for the hydrograph shape.
+
+## Parameters
+
+```{r params}
+P       <- 500                 # period, time steps. P≫lag ⇒ lag is a small phase fraction:
+                               # log(response) is climate lag-shifted, so cor(climate, log(response))
+                               # at the matching lag is ≈+1; contemporaneous cor ≈ cos(2π·lag/P)
+                               # → +0.81 at lag 50, +0.99 at lag 10, attenuated by climate's noise.
+Ac    <- 1.0                             # climate amplitude (exogenous driver, constant, no blend)
+beta_n <- 1.0; lag_n <- 50               # regime n:   log-space sensitivity 1.0, long lag
+beta_p <- 0.5; lag_p <- 10               # regime n+1: sensitivity halved, short lag
+R0      <- 1.0                 # baseflow scale: response = R0·exp(logsig+noise). logR0=0 ⇒
+                               # log(response) centred at 0, overlays climate directly.
+lag_max <- max(lag_n, lag_p)   # warm-up length so climate(t−lag) is always defined
+base_sd <- 0.05                # response baseline iid noise, LOG space (≈5% multiplicative)
+clim_sd <- 0.25                # climate baseline iid noise, 25% of amp (noisier driver; linear)
+dist_sd <- 0.30                # peak additional (disturbance) noise, LOG space (≈30% multiplicative)
+LEN_REG   <- 2000              # regime span (= 4·P → 4 visible cycles/regime)
+LEN_ADAPT <- 250              # adaptation / transition span
+```
+
+## Engine
+
+`climate = Ac·sin(2πt/P) + noise` is the exogenous driver, generated **once**. The
+**response is a lagged, log-linear transform of the realized (noisy) climate** — the
+standard streamflow model `log(response) = β·climate(t − lag) + noise`, i.e.
+`response = R0·exp(…)`. This is strictly positive (soft baseflow floor, no clamp), amplifies
+wet extremes, and gives the flashy-peak / slow-recession hydrograph shape for free. Crucially
+climate's 25% noise now propagates (lagged) into response — the response is a genuine
+*product of* climate, not an independent copy. A per-row morph weight `w ∈ [0,1]`
+(0 = regime n, 1 = n+1) drives transitions by crossfading two lagged copies of climate **in
+log space**: `(1−w)·β_n·climate(t−lag_n) + w·β_p·climate(t−lag_p)`. Log space is linear, so
+the crossfade is smooth and free of *spurious* chirps: both regimes share `P`, so frequency
+returns exactly to `P` after the transition. The lag change itself is **not** frequency-flat —
+shifting the delay `lag_n → lag_p` over a finite window is a Doppler shift,
+`f_out = f_in·(1 − dτ/dt)`, a transient excursion of magnitude ≈ `Δlag/window ≈ 16%` (Shift:
+one, speeds up; Return: two, out then back; Desync: none, `w=0`). This is the real kinematic
+signature of the lag change, not a numerical artifact. Because the lag is a plain index shift
+into the realized climate, climate is generated over an extended index (`lag_max` warm-up
+steps before t=1) so `climate(t−lag)` is always defined.
+Noise: climate carries a **constant 25%** linear baseline; response carries a **constant ≈5%
+in log space** (multiplicative — high flows noisier), plus a *separate* time-varying
+disturbance term in log space added to the **response** only, drawn on its own so it can be
+inspected in isolation (`add_response`; `add_climate` ≡ 0).
+
+```{r engine}
+# clamped linear ramp: v0 for t≤t0, v1 for t≥t1
+ramp <- function(t, t0, t1, v0, v1) v0 + pmin(pmax((t - t0) / (t1 - t0), 0), 1) * (v1 - v0)
+# triangular weight: 0 at t0, 1 at peak, 0 at t1 (excursion / bump)
+tri  <- function(t, t0, tpk, t1) ifelse(t <= tpk, ramp(t, t0, tpk, 0, 1), ramp(t, tpk, t1, 1, 0))
+
+# ordered phase category for export: pre → disturbance (single step td) → transition → post.
+# td = disturbance marker (end of regime n); t_trans_end = last step of the transition window.
+phase_cat <- function(time, td, t_trans_end)
+  factor(case_when(time <  td          ~ "pre",
+                   time == td          ~ "disturbance",
+                   time <= t_trans_end ~ "transition",
+                   TRUE                ~ "post"),
+         levels = c("pre", "disturbance", "transition", "post"))
+
+# climate: exogenous driver, generated ONCE over an extended index so climate(t−lag) is
+# always defined. idx runs (1−lag_max)…N; element for index i sits at position i + lag_max.
+make_climate <- function(N) {
+  idx <- seq.int(1 - lag_max, N)
+  Ac * sin(2 * pi * idx / P) + rnorm(length(idx), 0, clim_sd)
+}
+# realized noisy climate at time t − lag (index shift into the extended vector)
+clag <- function(climate_ext, t, lag) climate_ext[t - lag + lag_max]
+
+# w: morph weight (0 = regime n, 1 = n+1), scalar or per-row vector.
+# response = R0·exp(logsig + noise); logsig crossfades two lagged copies of the *realized*
+# climate in log space (linear there → smooth; lag change adds a real transient freq
+#   excursion f=f0·(1−dτ/dt), Doppler, not a numerical artifact). gain_r fades the signal
+# (Desync only). All response noise is log space (multiplicative); climate is never disturbed.
+build <- function(t, climate_ext, w, gain_r, add_sd_r, add_mu_r = 0) {
+  n      <- length(t)
+  add_r  <- rnorm(n, add_mu_r, add_sd_r)                       # disturbance noise (response, log space)
+  logsig <- (1 - w) * beta_n * clag(climate_ext, t, lag_n) +
+            w       * beta_p * clag(climate_ext, t, lag_p)     # crossfade of two lagged climate copies
+  logresp <- log(R0) + gain_r * logsig + rnorm(n, 0, base_sd) + add_r
+  tibble(
+    time         = t,
+    climate      = climate_ext[t + lag_max],                   # realized climate that later feeds clag
+    response     = exp(logresp),                               # positive, right-skewed (hydrograph)
+    log_response = logresp,                                    # clean lagged copy of climate (for overlay)
+    add_climate  = 0, add_response = add_r                     # disturbance adds nothing to climate
+  )
+}
+
+# consistent palettes: line colours (climate / log(response) / response) + phase-band fills
+series_col <- c(climate = "grey15", `log(response)` = "#6a51a3", response = "#6a51a3")
+phase_fill <- c(n = "#9ecae1", adapt = "#fcbba1", np1 = "#fdae6b")   # light blue / red / orange
+
+# long frame overlaying climate and log(response) — both ≈ ±β, lag-shifted, same scale
+overlay_long <- function(df)
+  pivot_longer(df, c(climate, log_response), names_to = "var") %>%
+    mutate(var = recode(var, log_response = "log(response)"))
+
+plot_series <- function(df, title, xlim = NULL, vlines = numeric()) {
+  ggplot(overlay_long(df), aes(time, value, colour = var)) +
+    { if (length(vlines)) geom_vline(xintercept = vlines, linetype = 2, colour = "grey45") } +
+    geom_line(linewidth = 0.3) +
+    scale_colour_manual(values = series_col) +
+    coord_cartesian(xlim = xlim) +
+    labs(title = title, x = "time", y = "value", colour = NULL)
+}
+
+# full-series view: labelled phase-band backgrounds behind climate + log(response)
+# phases: tibble(xmin, xmax, type ∈ names(phase_fill), label)
+plot_full <- function(df, phases, title, vlines = numeric()) {
+  lo <- overlay_long(df)
+  rng <- range(lo$value); top <- rng[2] + 0.18 * diff(rng)
+  ggplot() +
+    geom_rect(data = phases, aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf, fill = type),
+              alpha = 0.40, inherit.aes = FALSE) +
+    geom_text(data = phases, aes(x = (xmin + xmax) / 2, y = top, label = label),
+              inherit.aes = FALSE, size = 3, vjust = 1, colour = "grey25") +
+    { if (length(vlines)) geom_vline(xintercept = vlines, linetype = 2, colour = "grey30") } +
+    geom_line(data = lo, aes(time, value, colour = var), linewidth = 0.3) +
+    scale_fill_manual(values = phase_fill, guide = "none") +
+    scale_colour_manual(values = series_col) +
+    coord_cartesian(ylim = c(rng[1], top)) +
+    labs(title = title, x = "time", y = "value (climate & log-response)", colour = NULL)
+}
+
+# real-units response panel: the exp-scale (positive, flashy-peaked) hydrograph with bands
+plot_flow <- function(df, phases, title, vlines = numeric()) {
+  top <- max(df$response) * 1.05
+  ggplot() +
+    geom_rect(data = phases, aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf, fill = type),
+              alpha = 0.40, inherit.aes = FALSE) +
+    geom_text(data = phases, aes(x = (xmin + xmax) / 2, y = top, label = label),
+              inherit.aes = FALSE, size = 3, vjust = 1, colour = "grey25") +
+    { if (length(vlines)) geom_vline(xintercept = vlines, linetype = 2, colour = "grey30") } +
+    geom_line(data = df, aes(time, response), colour = series_col[["response"]], linewidth = 0.3) +
+    scale_fill_manual(values = phase_fill, guide = "none") +
+    coord_cartesian(ylim = c(0, top)) +
+    labs(title = title, x = "time", y = "response (flow, real units)")
+}
+
+plot_addnoise <- function(df, title, vlines = numeric()) {
+  ggplot(pivot_longer(df, c(add_climate, add_response), names_to = "var") %>%
+           mutate(var = sub("add_", "", var)),
+         aes(time, value, colour = var)) +
+    { if (length(vlines)) geom_vline(xintercept = vlines, linetype = 2, colour = "grey45") } +
+    geom_line(linewidth = 0.2) +
+    scale_colour_manual(values = series_col) +
+    labs(title = title, x = "time", y = "additional disturbance noise (log space)", colour = NULL)
+}
+```
+
+---
+
+# Shift
+
+Regime n → disturbance → adaptation (params blend n→n+1, additional response noise decays
+30%→0) → regime n+1. Settles permanently in the new regime.
+
+```{r shift-build}
+N   <- 2 * LEN_REG + LEN_ADAPT          # 4250
+t   <- seq_len(N)
+td  <- LEN_REG                          # disturbance marker (end of regime n)
+a0  <- td + 1; a1 <- td + LEN_ADAPT     # adaptation window [2001, 2250]
+climate_ext <- make_climate(N)          # exogenous driver (extended for the lag warm-up)
+
+# morph n → n+1 confined to the adaptation window (blends sensitivity + lag together)
+w <- ramp(t, td, a1, 0, 1)
+
+# additional disturbance noise on response: 30% at disturbance → 0 by regime n+1 (log space)
+add_sd_r <- (t >= a0 & t <= a1) * dist_sd * ramp(t, a0, a1, 1, 0)
+
+d_shift <- build(t, climate_ext, w, gain_r = 1, add_sd_r = add_sd_r) %>%
+  mutate(phase = phase_cat(time, td, a1))   # pre | disturbance (td) | transition (adaptation) | post (regime n+1)
+```
+
+```{r shift-plots, fig.height=12}
+library(patchwork)
+ph_shift <- tibble(xmin = c(1, a0, a1 + 1), xmax = c(td, a1, N), type = c("n", "adapt", "np1"),
+                   label = c("Regime n", "Adaptation", "Regime n+1"))
+plot_series(d_shift, "Regime n — climate & log(response), response lags by 50", xlim = c(1, 2 * P)) /
+plot_series(d_shift, "Adaptation — lag/sensitivity morph + decaying disturbance noise",
+            xlim = c(td - 2 * P, a1 + 2 * P), vlines = td) /
+plot_full(d_shift, ph_shift, "Full series — climate & log(response), phases shaded (dashed = disturbance)", vlines = td) /
+plot_flow(d_shift, ph_shift, "Response in real units — exp-scale hydrograph (amplitude halves post)", vlines = td) /
+plot_addnoise(d_shift, "Additional disturbance noise — response 30%→0; climate none", vlines = td)
+```
+
+```{r shift-export}
+write_csv(d_shift %>% transmute(time, climate = round(climate, 6), response = round(response, 6), phase),
+          file.path(OUT_DIR, "synthetic_shift.csv"))
+```
+
+---
+
+# Desync
+
+Regime n → disturbance → the **response** decouples: its log-signal gain decays 1→0 while
+the additional (log-space) disturbance noise grows, so the terminal response is **lognormal
+noise** whose **log-mean and log-variance** match regime n. The match is **log-space only**:
+regime n is `exp(sinusoid)` (a Bessel-`I₀` distribution) while the terminal block is
+`exp(Gaussian)` (lognormal), so at equal log-variance their **raw-unit variance still differs
+— terminal ≈ +40%** here. Compare in log space. Climate keeps oscillating (constant 25%
+noise) — a persistent driver the watershed no longer tracks coherently.
+
+```{r desync-build}
+N   <- 2 * LEN_REG + LEN_ADAPT          # 4250
+t   <- seq_len(N)
+td  <- LEN_REG
+a1  <- td + LEN_ADAPT                    # transition [2001, 2250]
+climate_ext <- make_climate(N)          # exogenous driver (extended for the lag warm-up)
+
+# terminal LOG-RESPONSE moments to match, estimated from climate_ext's pre-region BEFORE
+# building the response (add_* are inputs to build(), so deriving them from its output is
+# circular). Regime-n log-signal = beta_n·climate(t−lag_n); add base noise in quadrature.
+# NB sd_lr ≈ beta_n·sd(clag): the marginal spread of the regime-n log-signal.
+logsig_pre <- beta_n * clag(climate_ext, seq_len(td), lag_n)
+mu_lr <- mean(logsig_pre); sd_lr <- sqrt(var(logsig_pre) + base_sd^2)
+
+gain_r   <- ramp(t, td, a1, 1, 0)                              # log-signal fades, 0 after
+# additional (log-space) noise grows so terminal log-response marginal-spread-matches regime n
+add_sd_r <- ramp(t, td, a1, 0, sqrt(sd_lr^2 - base_sd^2))
+add_mu_r <- ramp(t, td, a1, 0, mu_lr)                          # drift to regime-n log-response mean (≈0)
+
+# climate untouched: clean sine + constant 25% noise; only response decouples into noise.
+# w = 0 throughout (no morph); decoupling is carried entirely by the fading gain_r. Terminal
+# response is lognormal noise whose LOG-moments match regime n. NB match is log-space ONLY:
+# regime n is exp(sinusoid) (Bessel I0), terminal is exp(Gaussian) (lognormal), so raw-unit
+# variance still differs (terminal ~+40%) at equal log-variance — see desync-check.
+d_desync <- build(t, climate_ext, 0, gain_r = gain_r, add_sd_r = add_sd_r, add_mu_r = add_mu_r) %>%
+  mutate(phase = phase_cat(time, td, a1))   # pre | disturbance (td) | transition (decoupling) | post (regime n+1 noise)
+```
+
+```{r desync-check}
+# design goal: terminal LOG-RESPONSE moments ≈ regime n log-response moments.
+# NB by-construction identity — add_sd_r/add_mu_r were *set* from mu_lr/sd_lr, so this
+# confirms the wiring reproduces them, it is NOT an independent validation of the design.
+# Linear-space row shown for contrast: it does NOT match (sd_term ≈ 1.2× sd_reg_n) — regime n
+# is exp(sinusoid), terminal is exp(Gaussian); equal log-variance ≠ equal raw variance.
+term <- d_desync %>% filter(time > a1)
+tibble(space      = c("log", "linear"),
+       mean_reg_n = c(mu_lr,           mean(exp(logsig_pre) * R0)),
+       mean_term  = c(mean(log(term$response)), mean(term$response)),
+       sd_reg_n   = c(sd_lr,           sd(R0 * exp(beta_n * clag(climate_ext, seq_len(td), lag_n) +
+                                                   rnorm(td, 0, base_sd)))),
+       sd_term    = c(sd(log(term$response)),   sd(term$response)))
+```
+
+```{r desync-plots, fig.height=12}
+ph_desync <- tibble(xmin = c(1, td + 1, a1 + 1), xmax = c(td, a1, N), type = c("n", "adapt", "np1"),
+                    label = c("Regime n", "Transition", "Regime n+1 (noise)"))
+plot_series(d_desync, "Regime n — climate & log(response)", xlim = c(1, 2 * P)) /
+plot_series(d_desync, "Transition — log(response) decays into matched-variance noise; climate persists",
+            xlim = c(td - 2 * P, a1 + 3 * P), vlines = td) /
+plot_full(d_desync, ph_desync, "Full series — climate & log(response), phases shaded (dashed = disturbance)", vlines = td) /
+plot_flow(d_desync, ph_desync, "Response in real units — hydrograph decays to lognormal noise", vlines = td) /
+plot_addnoise(d_desync, "Additional disturbance noise — response grows to regime-n log-variance; climate none", vlines = td)
+```
+
+```{r desync-export}
+write_csv(d_desync %>% transmute(time, climate = round(climate, 6), response = round(response, 6), phase),
+          file.path(OUT_DIR, "synthetic_desync.csv"))
+```
+
+---
+
+# Return
+
+Regime n → disturbance → single excursion toward n+1 that peaks then decays straight
+back to regime n. No sustained n+1. Additional disturbance noise strong at the
+disturbance, → 0 by the time the system re-settles in regime n.
+
+```{r return-build}
+N   <- 2 * LEN_REG + 2 * LEN_ADAPT      # 4500
+t   <- seq_len(N)
+td  <- LEN_REG                          # disturbance
+pk  <- td + LEN_ADAPT                   # 2250 max excursion (params == n+1)
+e1  <- td + 2 * LEN_ADAPT               # 2500 back to regime n
+climate_ext <- make_climate(N)          # exogenous driver (extended for the lag warm-up)
+
+w   <- tri(t, td, pk, e1)               # 0 →1 at peak →0 (drives the sensitivity/lag blend)
+
+# additional disturbance noise on response: 30% at disturbance → 0 by re-settle (log space)
+add_sd_r <- (t > td & t <= e1) * dist_sd * ramp(t, td + 1, e1, 1, 0)
+
+d_return <- build(t, climate_ext, w, gain_r = 1, add_sd_r = add_sd_r) %>%
+  mutate(phase = phase_cat(time, td, e1))   # pre | disturbance (td) | transition (excursion) | post (back to regime n)
+```
+
+```{r return-plots, fig.height=12}
+# excursion peaks at n+1 params then returns; no sustained n+1 regime → both ends are regime n
+ph_return <- tibble(xmin = c(1, td + 1, e1 + 1), xmax = c(td, e1, N), type = c("n", "adapt", "n"),
+                    label = c("Regime n", "Excursion", "Regime n"))
+plot_series(d_return, "Regime n — climate & log(response)", xlim = c(1, 2 * P)) /
+plot_series(d_return, "Excursion — morph to n+1 at peak, back to n",
+            xlim = c(td - 2 * P, e1 + 2 * P), vlines = c(td, pk)) /
+plot_full(d_return, ph_return, "Full series — climate & log(response), phases shaded (dashed = disturbance, peak)", vlines = c(td, pk)) /
+plot_flow(d_return, ph_return, "Response in real units — hydrograph excursion then re-settle", vlines = c(td, pk)) /
+plot_addnoise(d_return, "Additional disturbance noise — response 30%→0 over excursion; climate none", vlines = c(td, pk))
+```
+
+```{r return-export}
+write_csv(d_return %>% transmute(time, climate = round(climate, 6), response = round(response, 6), phase),
+          file.path(OUT_DIR, "synthetic_return.csv"))
+```
