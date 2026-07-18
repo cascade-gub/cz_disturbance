@@ -42,4 +42,23 @@ bench** for the methods, not a defect — how each method responds is the findin
 From repo root: `"/c/Program Files/R/R-4.6.1/bin/Rscript.exe" build_docs.R` renders every
 notebook and copies the self-contained HTML into `docs/` for GitHub Pages
 (`docs/index.html` is the landing page). Knitting an `.Rmd` via the RStudio **Knit** button
-does the same copy via its `knit:` YAML field.
+does the same copy via its `knit:` YAML field. `build_docs.R` covers only the tracked
+`syn_data` leg; `ms_data/` and `plots/` are git-ignored local notebooks, re-knitted by hand.
+
+## Report styling — **standard: dark page + white-matted figures**
+
+Every knitted report is a **dark-mode page** (`theme: darkly`, `highlight: breezedark`) with
+**figures in their native (light) colour scheme, matted on white** so they stay legible against
+the dark page. Do **not** re-theme plots dark to match the page — mat them instead. New notebooks
+must follow this. The mechanism (see any `syn_data`/`ms_data` setup chunk):
+
+- **PNG canvas:** `knitr::opts_chunk$set(dev.args = list(bg = "white"))` — native light figures.
+- **ggplot theme:** plain `theme_set(theme_bw(base_size = 11) + theme(legend.position = "bottom"))`
+  — native colours, no dark palette overrides.
+- **White matting:** a `` ```{css figure-matting, echo=FALSE} `` chunk giving
+  `.main-container img, div.figure img` a white background, padding, rounded corners and a soft
+  shadow — the figures read as white cards on the dark page.
+- **Base-R plots** (e.g. `WaveletComp` heatmaps): `par(bg = "white", fg = "black", col.axis =`
+  `"black", col.lab = "black", col.main = "black")` so they mat the same way.
+- **Error bars are black** (`colour = "black"`) for contrast against the white figure background;
+  subtle in-figure reference lines (dashed disturbance markers) stay light grey.
