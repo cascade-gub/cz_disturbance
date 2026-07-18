@@ -15,16 +15,19 @@ real-data messiness is the stress-test bench, and how each method copes is the r
 
 | File | What it is |
 |------|------------|
-| `prep_ms_series.Rmd` | **Prep** (analog of `syn_data/make_synthetic.Rmd`) — carves the real pull into the five wide datasets. |
-| `hbef_w1__series_daily.csv` · `hjandrews_GSWS10__…` · `fernow_WS-3__…` · `fernow_WS-5__…` · `santa_barbara_MC06__…` | The five datasets — one per screened disturbance (tracked in git). |
+| `prep_ms_series.Rmd` | **Prep** (analog of `syn_data/make_synthetic.Rmd`) — carves the real pull into the P→Q and C→Q datasets. |
+| `*__series_daily.csv` (×5) | **P→Q** datasets — daily precip + discharge, one per screened disturbance (tracked). |
+| `*__cq_native.csv` (×4) | **C→Q** datasets — discharge + nitrate on each site's native NO3 cadence (MC06 dropped; tracked). |
 | `analysis_03_central_tendency.Rmd` | **Analysis III** — analysis I's method (log-space moments + peak-derived synchrony) on real precip→discharge. |
-| `analysis_04_wavelet_synchrony.Rmd` | **Analysis IV** — analysis II's method (Morlet wavelet coherence / cross-power / phase-lag / amplitude at the annual band). |
+| `analysis_04_wavelet_synchrony.Rmd` | **Analysis IV** — analysis II's method (Morlet wavelet) on **P→Q** at the annual band. |
+| `analysis_05_cq_wavelet_synchrony.Rmd` | **Analysis V** — the same wavelet on the noisier **C→Q** (nitrate→discharge) coupling. |
 | `*.html` | Knitted output of each `.Rmd` (self-contained; also copied to `../docs/`). |
 | `CLAUDE.md` | Authoritative spec for this folder. |
 | `v2/` | The raw MacroSheds download (~1.8 GB feathers + shapefiles) — **git-ignored**. |
 
-Each `.Rmd` reads the five `*__series_daily.csv` from this directory (`.`); those CSVs are the
-single interface between the local pull and the analyses (feathers are never touched by 03/04).
+Each `.Rmd` reads its `*__series_daily.csv` (03/04) or `*__cq_native.csv` (05) from this directory
+(`.`); those CSVs are the single interface between the local pull and the analyses (feathers are
+never touched by the analyses).
 
 ---
 
@@ -61,22 +64,32 @@ coupling is looser than the synthetic ideal — that is the point.
 
 ## The analyses
 
-Two passes, the **same two methods** as `syn_data`, on the same five sites — so the comparison is
-clean. Each contrasts settled `pre` vs `post` windows with block standard errors (valid under
+The **same methods** as `syn_data`, on real watersheds, over two couplings of decreasing
+causality. Each contrasts settled `pre` vs `post` windows with block standard errors (valid under
 autocorrelation), now resting on **decades of annual cycles** rather than the synthetic ~2.
 
-**Analysis III — central tendency (`analysis_03`).** Analysis I's peak/moments method on real
-data. Headline: discharge shows a clean ~annual peak, but the episodic precip **driver** frays the
-method (unstable "period"; `MC06` degenerates), the amplitude ratio no longer maps to a clean β,
-and real pre/post differences tangle with decadal climate variability — a **partial, noisy** read.
+**Analysis III — P→Q central tendency (`analysis_03`).** Analysis I's peak/moments method on real
+precip→discharge (five sites). Headline: discharge shows a clean ~annual peak, but the episodic
+precip **driver** frays the method (unstable "period"; `MC06` degenerates), the amplitude ratio no
+longer maps to a clean β, and pre/post differences tangle with decadal climate variability — a
+**partial, noisy** read.
 
-**Analysis IV — wavelet synchrony (`analysis_04`).** Analysis II's Morlet method at the `P≈365 d`
-band. Headline: the synthetic lesson reappears **unprompted** — normalized coherence **saturates
-near 1** everywhere (so it is not a usable discriminator), and whatever real change exists is read
-from **un-normalized cross-power and band amplitude**, which the wavelet still resolves cleanly.
+**Analysis IV — P→Q wavelet synchrony (`analysis_04`).** Analysis II's Morlet method at the
+`P≈365 d` band (five sites). Headline: the synthetic lesson reappears **unprompted** — normalized
+coherence **saturates near 1** everywhere (not a usable discriminator), and whatever real change
+exists is read from **un-normalized cross-power and band amplitude**.
 
-Together: two methods, two different partial views, each incomplete in its own way on real,
-less-deterministic coupling — which is the whole point of running both.
+**Analysis V — C→Q wavelet synchrony (`analysis_05`).** The same wavelet moved to
+**discharge→nitrate concentration** — a deliberately *less causal, noisier* coupling (four sites;
+MC06 dropped). Nitrate is grab-sampled, so each site runs on its **native cadence** and periods are
+rescaled to a **shared physical-time axis** (a coarse-sampled site simply can't resolve short
+periods — shown, not hidden). Both channels in log space (C–Q power law); the pre-fit slope is the
+C–Q exponent. Headline: coherence saturates as before, so the weaker C–Q signal — if seasonally
+organised at all — lives in cross-power/amplitude, now most relevant at the two sites whose
+disturbance hits nitrogen directly (hbef Ca, fernow WS-3 acidification).
+
+Together: the methods on progressively harder couplings — idealised (I/II) → near-causal P→Q
+(III/IV) → noisy C→Q (V) — each a different, partial view, incomplete in its own way.
 
 ---
 
@@ -91,12 +104,13 @@ MC06's coupling accordingly; 03/04 surface this table and repeat the caveat.
 ## Reproduce & build
 
 Requirements: **R** (`../CLAUDE.md` has the path) with `rmarkdown, knitr, dplyr, tidyr, readr,
-ggplot2, patchwork` (all notebooks) plus **`WaveletComp`** (analysis_04 only).
+ggplot2, patchwork` (all notebooks) plus **`WaveletComp`** (analysis_04 / analysis_05).
 
-- **Run an analysis** — knit `analysis_03_*.Rmd` or `analysis_04_*.Rmd`; they read the five CSVs
-  from `.` and need nothing else (no local pull). Analysis IV takes ~2 min (five wavelet transforms).
-- **Regenerate the datasets** — knit `prep_ms_series.Rmd`. This one **needs the local MacroSheds
-  pull** (`../data/*_daily.csv` + `../qualifying_disturbances.csv`), which is git-ignored.
+- **Run an analysis** — knit `analysis_03/04_*.Rmd` (read the five `*__series_daily.csv`) or
+  `analysis_05_*.Rmd` (reads the four `*__cq_native.csv`); they need nothing else (no local pull).
+  IV takes ~4 min (five daily wavelet transforms); V is fast (four native-cadence transforms).
+- **Regenerate the datasets** — knit `prep_ms_series.Rmd` (builds both the P→Q and C→Q CSVs). This
+  one **needs the local MacroSheds pull** (`../data/*` + `../qualifying_disturbances.csv`), git-ignored.
 - **Build everything to the published site** — from the **repo root**:
   ```
   Rscript build_docs.R

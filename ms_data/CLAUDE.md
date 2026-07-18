@@ -5,21 +5,32 @@ comparison**: how two different approaches to quantifying driver→response *syn
 central-tendency / peak-spacing approach and the Morlet-wavelet approach — behave on real
 watersheds, versus on the idealised synthetic system in `../syn_data/`. The synthetic leg
 (analyses I/II) frames the *theory and expectations* — what each method can and cannot see. This
-leg (analyses III/IV) runs the **same two methods** on real, less-deterministic synchrony to see
-how they hold up. Each method is a different, partial perspective on the system; some more
-complete than others. **The real-data messiness is the stress-test bench, not a defect** — how
-each method responds (what it recovers, what it loses, where it is fooled) is the finding.
+leg runs the **same methods** on real, less-deterministic synchrony to see how they hold up. Each
+method is a different, partial perspective on the system; some more complete than others. **The
+real-data messiness is the stress-test bench, not a defect** — how each method responds (what it
+recovers, what it loses, where it is fooled) is the finding.
+
+Two real couplings are analyzed, ordered by how *causal* they are:
+
+- **P→Q** (analyses III/IV) — precipitation → discharge. Near-mechanical (rain drives flow); the
+  reference case. III = peak/moments, IV = wavelet.
+- **C→Q** (analysis 05) — discharge → **nitrate concentration**. Deliberately *less causal /
+  noisier*: nitrate is only partly set by flow (sources, hysteresis, dilution-vs-flushing, and at
+  two sites a chemical manipulation acting directly on N). The wavelet's hardest real test.
 
 > Companion doc: `README.md` (human orientation to the folder). Full generative spec of the
 > *idealised* system: `../syn_data/CLAUDE.md`. Repo-wide context + toolchain: `../CLAUDE.md`.
 
 ## The datasets it analyzes
 
-Five tracked wide CSVs — `<site>__series_daily.csv` — one per screened disturbance, built by
-`prep_ms_series.Rmd` from the local MacroSheds pull (`../data/*_daily.csv`) + the screened
-disturbance windows (`../qualifying_disturbances.csv`). **These CSVs are the only interface
-between the pull and the analyses** — exactly as `synthetic_*.csv` are in `syn_data/`. Analyses
-03/04 need nothing but these (no `macrosheds`/feather dependency); regenerating them does.
+Two families of tracked CSVs, both built by `prep_ms_series.Rmd` from the local MacroSheds pull
+(`../data/*_daily.csv`) + the screened disturbance windows (`../qualifying_disturbances.csv`).
+**These CSVs are the only interface between the pull and the analyses** — as `synthetic_*.csv` are
+in `syn_data/`. Analyses 03/04/05 need nothing but these (no `macrosheds`/feather dependency).
+
+- **P→Q:** five `<site>__series_daily.csv` (one per disturbance) — daily, precip + discharge.
+- **C→Q:** four `<site>__cq_native.csv` (MC06 dropped) — each on that site's **native NO3 cadence**
+  (`step_days` bins), discharge + nitrate.
 
 ### Schema (all five files, identical)
 
@@ -98,6 +109,30 @@ Precipitation is partly **MacroSheds modelled infill**:
 **`MC06`'s driver is almost entirely modelled** — any MC06 precip→discharge coupling is coupling
 to a *modelled* driver, not observed rain. Analyses 03/04 surface this table and caveat MC06
 throughout.
+
+## C→Q leg (analysis 05) — the noisier coupling
+
+Analysis 05 is Analysis IV's wavelet moved to **nitrate concentration → discharge**. Key
+differences from P→Q, all forced by nitrate being **irregular grab samples** (not daily):
+
+- **`<site>__cq_native.csv` schema:** `time` (bin index), `date`, `Q` (L/s), `C` (nitrate, mg N/L),
+  `C_interp` / `Q_interp` (bin had no real sample → interpolated), `phase`, `step_days`, `site`.
+  `Q`/`C` are raw; analysis 05 takes `climate = log(Q)`, `log_response = log(C)` (**log–log C–Q
+  power law**; the pre-fit predictor slope is the C–Q exponent `b`).
+- **Native-cadence grids, not a common grid.** Each site's bin = its median NO3 interval
+  (`step_days`: hbef 7, hjandrews 21, fernow ×2 7). Each bin = **mean of the real samples in it**
+  (aggregation, *not* interpolation — nothing invented where data exist); only empty bins are
+  linearly filled and flagged (`C_interp`). This avoids fabricating the sparser records.
+- **Shared physical-time axis.** The wavelet runs in native steps (`dt = 1`), then every period is
+  rescaled to **days** (`Period × step_days`) and every lag to days (`angle/2π × 365`), so all four
+  panels share one period-in-days axis and one annual band despite different grids. `EF` and the
+  block size are `√2·365/step` and `365/step` steps. **A coarser grid can't resolve short periods**
+  — hjandrews (21-day) goes blank below ~3 months; shown, not hidden. `lowerPeriod = 4` steps
+  (WaveletComp's coherence-smoothing floor), so the low edge is ≈ `4·step_days`.
+- **Four sites; MC06 dropped** (its nitrate is 44% empty months + a ~4-yr gap → a wavelet would
+  read interpolation). Per-site **n, cadence, and % interpolated** are reported on every panel.
+- Coherence saturates again (≈0.9–1) — the P→Q lesson carries over; C–Q signal, if any, is in
+  cross-power / band amplitude, now against a genuinely weaker, noisier coupling.
 
 ## Analysis notes / gotchas
 

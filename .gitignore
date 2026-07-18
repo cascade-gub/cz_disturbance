@@ -40,5 +40,6 @@ syn_data/pre_loglinear/
 !syn_data/synthetic_shift.csv
 !syn_data/synthetic_desync.csv
 !syn_data/synthetic_return.csv
-# and the five real-data wide series (the tracked interface for analyses 03/04).
+# and the five real-data P→Q series + four C→Q series (the tracked interface for analyses 03/04/05).
 !ms_data/*__series_daily.csv
+!ms_data/*__cq_native.csv

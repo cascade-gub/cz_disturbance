@@ -1,0 +1,448 @@
+---
+title: "Real-data disturbance–response V — C–Q wavelet synchrony (nitrate concentration → discharge)"
+subtitle: "The Analysis IV wavelet, moved to the noisier concentration–discharge coupling — nitrate is only partly set by flow, a less-causal, higher-noise test of the method (native-cadence grids, shared physical-time axis)"
+author: "nic (nic@cascadeclimate.org)"
+date: "`r Sys.Date()`"
+# Knit → render in place, then copy the self-contained HTML to <repo-root>/docs for GitHub Pages.
+knit: |
+  (function(input, encoding) {
+    out  <- rmarkdown::render(input, encoding = encoding)
+    docs <- file.path(dirname(normalizePath(input)), "..", "docs")
+    dir.create(docs, showWarnings = FALSE, recursive = TRUE)
+    file.copy(out, docs, overwrite = TRUE)
+    out
+  })
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    code_folding: hide
+    theme: darkly
+    highlight: breezedark
+    fig_width: 10
+    fig_caption: true
+    self_contained: true
+    includes:
+      before_body: ../navbar.html
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      dev.args = list(bg = "white"))   # native (light) PNG canvas; white matting added via CSS
+if (!requireNamespace("WaveletComp", quietly = TRUE))
+  stop("analysis_05 needs WaveletComp — install once with  install.packages('WaveletComp')")
+suppressMessages({ library(dplyr); library(tidyr); library(readr); library(ggplot2)
+                   library(knitr); library(patchwork); library(WaveletComp) })
+theme_set(theme_bw(base_size = 11) + theme(legend.position = "bottom"))
+P_DAYS <- 365   # the physical band we read synchrony at (annual), in DAYS. Sites run on native grids
+                # (different step sizes), so all periods/lags are converted to days for a shared axis.
+fig_n <- local({ i <- 0L; function(x) { i <<- i + 1L; paste0("Figure ", i, ". ", x) } })
+```
+
+```{css figure-matting, echo=FALSE}
+/* White matting behind every figure: native light plots (incl. WaveletComp heatmaps) read cleanly on the darkly page. */
+.main-container img,
+div.figure img {
+  background-color: #ffffff;
+  padding: 10px;
+  border-radius: 6px;
+  box-sizing: border-box;
+  max-width: 100%;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+}
+```
+
+This is **Analysis IV's method — Morlet wavelet coherence via WaveletComp — moved to the
+concentration–discharge (C–Q) relationship**: driver = discharge `Q`, response = **stream nitrate
+concentration `C`**. Where the P→Q coupling (III/IV) is close to causal — rain drives flow — the
+C–Q coupling is **partial and noisier**: nitrate concentration is only *partly* set by flow
+(dilution vs flushing, catchment sources, hysteresis, and — at two of these sites — a chemical
+manipulation acting directly on nitrate). So this is the real test the study has been building
+toward: **how does the wavelet read a genuinely weaker, less-deterministic coupling?**
+
+Both channels are analyzed in **log space** — the standard C–Q power-law framing
+(`log C = a + b·log Q`), so `climate = log(Q)`, `log_response = log(C)`. The pre-fit predictor's
+slope below *is* that C–Q exponent `b` (≈0 ⇒ chemostatic / well-buffered; ≠0 ⇒ chemodynamic).
+
+**Sampling & the shared axis.** Nitrate is grab-sampled (weekly to ~3-weekly), so — rather than
+fabricate a common fine grid — each site runs on **its own native-cadence grid** (bin =
+`step_days`, built in `prep_ms_series.Rmd`); the wavelet runs in those native steps and every
+period/lag is rescaled to **physical days** (`× step_days`) so all four panels share one
+period-in-days axis and one annual band. The cost is honest: a coarser-sampled site cannot
+resolve short periods — **hjandrews (21-day steps) goes blank below ~3 months** — and the
+**percent of interpolated (no-sample) bins** is reported on every panel. `MC06` is excluded (its
+nitrate is 44% empty months with a ~4-year gap — a wavelet there would read interpolation).
+
+Four band-localized quantities, all read at the physical **annual band (`P≈365 d`)**: wavelet
+**coherence** (normalized), **cross-power** (un-normalized), **phase → apparent lag** (days), and
+**amplitude ratio** `C/Q`. *Same caveats as IV:* COI/edge buffering (`EF ≈ √2·annual` in each
+site's steps), and block SEs (one estimate per annual cycle; circular for phase).
+
+## Helpers
+
+```{r helpers}
+# ---- small numerics -------------------------------------------------------------------------
+CMEAN <- function(a) Arg(mean(exp(1i * a)))            # circular mean of angles
+smooth_ma <- function(x, w) { w <- max(3, w); as.numeric(stats::filter(x, rep(1 / w, w))) }
+
+# band scale-rows within ±5% of the annual band — in PHYSICAL days (Period is in native steps, ×step).
+band_rows <- function(wc, step) which(abs(wc$Period * step - P_DAYS) <= 0.05 * P_DAYS)
+
+# physical-period guide lines on the coherence image: a season (3 mo), a year, two years.
+wc_marks <- c("3 mo" = 91, "1 yr" = 365, "2 yr" = 730)
+plot_wc <- function(wc, step, main) {
+  op <- par(bg = "white", fg = "black", col.axis = "black", col.lab = "black", col.main = "black")
+  on.exit(par(op))
+  at_steps <- wc_marks / step                          # physical period → native-step position
+  keep <- at_steps >= min(wc$Period) & at_steps <= max(wc$Period)   # only marks the site can resolve
+  wc.image(wc, which.image = "wc", plot.arrow = TRUE, plot.contour = FALSE,
+           color.key = "interval", timelab = "time (bins)", periodlab = "period",
+           legend.params = list(lab = "wavelet coherence"), main = main, graphics.reset = FALSE,
+           spec.period.axis = list(at = at_steps[keep], labels = names(wc_marks)[keep]))
+  abline(h = log2(at_steps[keep]), lty = 2, col = "black", lwd = 1.4)          # season / year / 2-year guides
+}
+
+# ---- WaveletComp wrapper (native steps; dt = 1) ---------------------------------------------
+# upperPeriod ≈ 4 years expressed in this site's steps; lowerPeriod = 4 steps (coherence smoothing
+# floor ⇒ the site's short-period limit, ≈ 4·step_days). loess.span = 0: analyzed band sits below
+# any decadal trend, and standardization is exactly /sd so the ×sd amplitude rescale stays exact.
+wco <- function(df, step)
+  analyze.coherency(as.data.frame(df[, c("climate", "log_response")]),
+                    my.pair = c("climate", "log_response"), loess.span = 0,
+                    dt = 1, dj = 1/20, lowerPeriod = 4, upperPeriod = round(4 * P_DAYS / step),
+                    make.pval = FALSE, verbose = FALSE)
+
+# ---- collapse to one time-resolved series at the annual band --------------------------------
+band_trace <- function(wc, df, step) {
+  bi   <- band_rows(wc, step); EF <- round(sqrt(2) * P_DAYS / step)      # COI buffer, in steps
+  sd_c <- sd(df$climate); sd_r <- sd(df$log_response)
+  ang  <- apply(wc$Angle[bi, , drop = FALSE], 2, CMEAN)
+  tibble(time      = df$time, date = df$date, phase = df$phase,
+         coherence = colMeans(wc$Coherence[bi, , drop = FALSE]),
+         xpower    = colMeans(wc$Power.xy[bi, , drop = FALSE]),
+         amp_ratio = colMeans(wc$Ampl.y[bi, , drop = FALSE]) /
+                     colMeans(wc$Ampl.x[bi, , drop = FALSE]) * (sd_r / sd_c),
+         angle     = ang,
+         lag       = ang / (2 * pi) * P_DAYS,                             # phase → DAYS (physical annual band)
+         coi_ok    = df$time >= EF & df$time <= nrow(df) - EF)
+}
+
+# ---- settled pre/post summary with block SEs (one block per annual cycle, in steps) ---------
+block_stat <- function(t, v, blk, circ = FALSE) {
+  b  <- (t - min(t)) %/% blk
+  bv <- as.numeric(tapply(seq_along(t), b, function(i) if (circ) CMEAN(v[i]) else mean(v[i])))
+  n  <- length(bv)
+  if (circ) { R <- Mod(mean(exp(1i * bv))); disp <- if (R < 1) sqrt(-2 * log(R)) else 0 } else disp <- sd(bv)
+  list(value = if (circ) CMEAN(bv) else mean(bv), se = if (n > 1) disp / sqrt(n) else NA_real_, n = n)
+}
+
+# settled windows: buffer EF (steps) from both ends AND the disturbance. blk = annual cycle in steps.
+wave_summary <- function(tr, step) {
+  EF <- round(sqrt(2) * P_DAYS / step); blk <- max(2, round(P_DAYS / step))
+  ds <- min(tr$time[tr$phase == "disturbance"]); de <- max(tr$time[tr$phase == "disturbance"])
+  N  <- max(tr$time)
+  wins <- list(pre  = tr$time >= EF      & tr$time <= ds - EF,
+               post = tr$time >= de + EF & tr$time <= N  - EF)
+  one <- function(sel) {
+    t <- tr$time[sel]
+    co <- block_stat(t, tr$coherence[sel], blk); xp <- block_stat(t, tr$xpower[sel], blk)
+    ar <- block_stat(t, tr$amp_ratio[sel], blk); an <- block_stat(t, tr$angle[sel], blk, circ = TRUE)
+    tibble(n_blocks = co$n,
+           coherence = co$value, coherence_se = co$se,
+           xpower    = xp$value, xpower_se    = xp$se,
+           amp_ratio = ar$value, amp_ratio_se = ar$se,
+           phi       = an$value,                 phi_se = an$se,
+           lag       = an$value / (2*pi) * P_DAYS, lag_se = an$se / (2*pi) * P_DAYS)   # days
+  }
+  bind_rows(pre = one(wins$pre), post = one(wins$post), .id = "phase") %>%
+    mutate(phase = factor(phase, c("pre", "post")))
+}
+
+# ---- pre-fit C–Q predictor: log(C) ≈ b · log(Q)(t − lag). b = the C–Q power-law exponent -----
+fit_pre <- function(df, step) {
+  pre <- df[df$phase == "pre", ]; cl <- pre$climate; rs <- pre$log_response; n <- length(rs)
+  Ls  <- 0:max(1, round(0.6 * P_DAYS / step))                            # plausible lags < ~0.6 yr, in steps
+  cr  <- vapply(Ls, function(L) suppressWarnings(cor(rs[(L + 1):n], cl[seq_len(n - L)])), numeric(1))
+  L   <- Ls[which.max(replace(cr, is.na(cr), -Inf))]
+  x   <- cl[seq_len(n - L)]; y <- rs[(L + 1):n]
+  list(lag = L, gain = sum(x * y) / sum(x * x))
+}
+resid_trace <- function(df, step) {
+  fp <- fit_pre(df, step); L <- fp$lag; N <- nrow(df)
+  pred <- rep(NA_real_, N); if (L < N) pred[(L + 1):N] <- fp$gain * df$climate[seq_len(N - L)]
+  out <- tibble(time = df$time, date = df$date, phase = df$phase, resid = df$log_response - pred,
+                dresid = c(NA, diff(smooth_ma(df$log_response - pred, round(90 / step)))))
+  attr(out, "lag") <- L; attr(out, "gain") <- fp$gain; attr(out, "step") <- step; out
+}
+
+# ---- shared plotting furniture --------------------------------------------------------------
+phase_fill <- c(pre = "#9ecae1", disturbance = "grey45", post = "#fdae6b")
+bar_fill   <- phase_fill[c("pre", "post")]
+phase_bands <- function(ph) ph %>% filter(phase != "disturbance") %>%
+  group_by(phase) %>% summarise(xmin = min(date), xmax = max(date), .groups = "drop")
+phase_band_layers <- function(d) {
+  bands <- phase_bands(d); td <- d$date[d$phase == "disturbance"]
+  list(geom_rect(data = bands, aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf, fill = phase),
+                 alpha = 0.30, inherit.aes = FALSE),
+       geom_vline(xintercept = td, linetype = 2, colour = "grey70"),
+       scale_fill_manual(values = phase_fill, guide = "none"))
+}
+
+plot_resid <- function(df, step, title) {
+  rt <- resid_trace(df, step); L <- attr(rt, "lag"); g <- attr(rt, "gain")
+  bands <- phase_bands(df); ytop <- max(abs(rt$resid), na.rm = TRUE)
+  sc <- ytop / max(abs(rt$dresid), na.rm = TRUE)
+  ggplot() + phase_band_layers(df) +
+    geom_hline(yintercept = 0, colour = "grey70", linewidth = 0.3) +
+    geom_line(data = rt, aes(date, dresid * sc), colour = "#d94801", linewidth = 0.25, na.rm = TRUE) +
+    geom_line(data = rt, aes(date, resid),       colour = "#238b45", linewidth = 0.3, na.rm = TRUE) +
+    geom_text(data = mutate(bands, x = xmin + (xmax - xmin)/2),
+              aes(x = x, y = ytop, label = phase), vjust = 1, size = 3, colour = "grey25") +
+    scale_y_continuous(sec.axis = sec_axis(~ . / sc, name = "d(residual)/dt (smoothed, orange)")) +
+    labs(title = title, x = NULL, y = "residual = log(C) − predicted (green)",
+         subtitle = sprintf("pre-fit C–Q predictor:  log(C)(t) ≈ %.2f · log(Q)(t − %d bins ≈ %d d)   [slope = C–Q exponent b]",
+                            g, L, L * step))
+}
+
+metric_labs <- c(coherence = "coherence", xpower = "cross power", amp_ratio = "amp ratio", lag = "app. lag (d)")
+plot_band_trace <- function(tr, title) {
+  m <- names(metric_labs)
+  long <- tr %>% mutate(across(all_of(m), ~ ifelse(coi_ok, ., NA_real_))) %>%
+    select(date, all_of(m)) %>% pivot_longer(-date, names_to = "metric") %>%
+    mutate(metric = factor(metric, m))
+  ggplot() + phase_band_layers(tr) +
+    geom_line(data = long, aes(date, value), linewidth = 0.3, na.rm = TRUE) +
+    facet_wrap(~ metric, scales = "free_y", ncol = 1, strip.position = "left",
+               labeller = as_labeller(metric_labs)) +
+    labs(title = title, x = NULL, y = NULL)
+}
+
+metrics_long <- function(sm, keys) {
+  m <- names(metric_labs)
+  val <- sm %>% select(all_of(c(keys, m))) %>% pivot_longer(all_of(m), names_to = "metric", values_to = "value")
+  se  <- sm %>% select(all_of(c(keys, paste0(m, "_se")))) %>%
+    rename_with(~ sub("_se$", "", .x), all_of(paste0(m, "_se"))) %>%
+    pivot_longer(all_of(m), names_to = "metric", values_to = "se")
+  left_join(val, se, by = c(keys, "metric")) %>% mutate(metric = factor(metric, m))
+}
+plot_wave_bars <- function(sm, title) {
+  ggplot(metrics_long(sm, "phase"), aes(phase, value, fill = phase)) +
+    geom_col(width = 0.7) +
+    geom_errorbar(aes(ymin = value - se, ymax = value + se), width = 0.25, colour = "black", na.rm = TRUE) +
+    facet_wrap(~ metric, scales = "free_y", nrow = 1, labeller = as_labeller(metric_labs)) +
+    scale_fill_manual(values = bar_fill, guide = "none") + labs(title = title, x = NULL, y = NULL)
+}
+emit_table <- function(sm, caption)
+  cat(kable(sm %>% select(phase, n_blocks, coherence, xpower, amp_ratio, phi, lag),
+            digits = 2, caption = caption), sep = "\n")
+
+# per-site provenance line (n, cadence, % interpolated) — communicated on every panel.
+prov_line <- function(d) sprintf(
+  "**n = %d bins** (pre %d / post %d) · native step **%d d** · **%.0f%% of bins interpolated** (no NO3 sample).",
+  nrow(d), sum(d$phase == "pre"), sum(d$phase == "post"), d$step_days[1], 100 * mean(d$C_interp))
+```
+
+```{r load}
+sites <- c("hbef_w1", "hjandrews_GSWS10", "fernow_WS-3", "fernow_WS-5")   # MC06 dropped (see intro)
+D <- lapply(sites, function(s)
+  read_csv(sprintf("%s__cq_native.csv", s), show_col_types = FALSE) %>%
+    mutate(phase = factor(phase, c("pre", "disturbance", "post")),
+           climate = log(Q), log_response = log(C)))          # C–Q log–log
+names(D) <- sites
+STEP <- setNames(vapply(D, function(d) d$step_days[1], numeric(1)), sites)
+qd <- read_csv("../qualifying_disturbances.csv", show_col_types = FALSE) %>%
+  mutate(site = paste0(domain, "_", site_code))
+label <- setNames(sprintf("%s (%s, %s)", qd$site, qd$disturbance, qd$class), qd$site)
+```
+
+```{r derive}
+# One coherency transform per site (native steps), reused by every image/trace/table.
+WC <- Map(wco, D, STEP)
+TR <- Map(band_trace, WC, D, STEP)
+SM <- Map(wave_summary, TR, STEP)
+```
+
+## Data provenance (nitrate coverage)
+
+Nitrate `n`, native cadence, and interpolated-bin fraction per site — the honest resolution each
+C–Q wavelet rests on. Discharge is fully observed; the interpolation is all on the nitrate side.
+
+```{r provenance, results='asis'}
+prov <- bind_rows(lapply(D, function(d) tibble(
+  site = d$site[1], step_days = d$step_days[1], n_bins = nrow(d),
+  pre = sum(d$phase == "pre"), post = sum(d$phase == "post"),
+  C_interp_pct = round(100 * mean(d$C_interp), 1))))
+cat(kable(prov, caption = "Per-site C–Q grid: native step, n bins, pre/post split, % interpolated (no-sample) bins."), sep = "\n")
+```
+
+---
+
+# hbef_w1 — chemical addition (pulse) · Ca
+
+The best-sampled site (near-weekly, ~6% interpolated). The Ca (wollastonite) addition acts on
+watershed chemistry, so pre/post nitrate coupling is squarely in scope here.
+
+```{r hbef-prov, results='asis'}
+cat(prov_line(D[["hbef_w1"]]))
+```
+
+```{r hbef-resid, fig.height=3.4, fig.cap=fig_n("hbef_w1 — C–Q model residual (green) + smoothed derivative (orange); phases shaded, dashed = disturbance. Subtitle gives the pre-fit C–Q exponent b.")}
+plot_resid(D[["hbef_w1"]], STEP["hbef_w1"], paste(label["hbef_w1"], "— C–Q residual & derivative"))
+```
+
+```{r hbef-wc, fig.height=4.6, fig.cap=fig_n("hbef_w1 — C–Q wavelet coherence (time × period, period in days via the native step). Dashed guides = season / year / 2-year.")}
+plot_wc(WC[["hbef_w1"]], STEP["hbef_w1"], "hbef_w1 — C–Q wavelet coherence")
+```
+
+```{r hbef-trace, fig.height=5.2, fig.cap=fig_n("hbef_w1 — annual-band C–Q metrics through time; COI edges blanked, phases shaded.")}
+plot_band_trace(TR[["hbef_w1"]], "hbef_w1 — C–Q synchrony at the annual band, through time")
+```
+
+```{r hbef-table, results='asis'}
+emit_table(SM[["hbef_w1"]], "hbef_w1 — C–Q band synchrony, settled pre vs post")
+```
+
+```{r hbef-bars, fig.height=3, fig.cap=fig_n("hbef_w1 — pre vs post C–Q band metrics, ±1 SE.")}
+plot_wave_bars(SM[["hbef_w1"]], "hbef_w1 — C–Q band metrics, pre vs post (±1 SE)")
+```
+
+---
+
+# hjandrews_GSWS10 — debris flow (pulse)
+
+The coarsest grid (~3-weekly), so this panel is **blank below ~3 months** — an honest limit of its
+sampling. A physical channel disturbance; watch whether the annual-band C–Q amplitude/lag shift.
+
+```{r hja-prov, results='asis'}
+cat(prov_line(D[["hjandrews_GSWS10"]]))
+```
+
+```{r hja-resid, fig.height=3.4, fig.cap=fig_n("hjandrews_GSWS10 — C–Q residual (green) + derivative (orange); phases shaded, dashed = disturbance.")}
+plot_resid(D[["hjandrews_GSWS10"]], STEP["hjandrews_GSWS10"], paste(label["hjandrews_GSWS10"], "— C–Q residual & derivative"))
+```
+
+```{r hja-wc, fig.height=4.6, fig.cap=fig_n("hjandrews_GSWS10 — C–Q wavelet coherence. Blank below ~3 months (21-day sampling).")}
+plot_wc(WC[["hjandrews_GSWS10"]], STEP["hjandrews_GSWS10"], "hjandrews_GSWS10 — C–Q wavelet coherence")
+```
+
+```{r hja-trace, fig.height=5.2, fig.cap=fig_n("hjandrews_GSWS10 — annual-band C–Q metrics through time.")}
+plot_band_trace(TR[["hjandrews_GSWS10"]], "hjandrews_GSWS10 — C–Q synchrony at the annual band, through time")
+```
+
+```{r hja-table, results='asis'}
+emit_table(SM[["hjandrews_GSWS10"]], "hjandrews_GSWS10 — C–Q band synchrony, settled pre vs post")
+```
+
+```{r hja-bars, fig.height=3, fig.cap=fig_n("hjandrews_GSWS10 — pre vs post C–Q band metrics, ±1 SE.")}
+plot_wave_bars(SM[["hjandrews_GSWS10"]], "hjandrews_GSWS10 — C–Q band metrics, pre vs post (±1 SE)")
+```
+
+---
+
+# fernow_WS-3 — chemical addition (chronic) · acidification
+
+Chronic (NH₄)₂SO₄ acidification since 1989 — an *ongoing* manipulation acting directly on stream
+nitrogen, so "post" is an actively-forced regime. One flagged multi-month nitrate gap (~21%
+interpolated overall).
+
+```{r fw3-prov, results='asis'}
+cat(prov_line(D[["fernow_WS-3"]]))
+```
+
+```{r fw3-resid, fig.height=3.4, fig.cap=fig_n("fernow_WS-3 — C–Q residual (green) + derivative (orange); phases shaded, dashed = disturbance.")}
+plot_resid(D[["fernow_WS-3"]], STEP["fernow_WS-3"], paste(label["fernow_WS-3"], "— C–Q residual & derivative"))
+```
+
+```{r fw3-wc, fig.height=4.6, fig.cap=fig_n("fernow_WS-3 — C–Q wavelet coherence.")}
+plot_wc(WC[["fernow_WS-3"]], STEP["fernow_WS-3"], "fernow_WS-3 — C–Q wavelet coherence")
+```
+
+```{r fw3-trace, fig.height=5.2, fig.cap=fig_n("fernow_WS-3 — annual-band C–Q metrics through time.")}
+plot_band_trace(TR[["fernow_WS-3"]], "fernow_WS-3 — C–Q synchrony at the annual band, through time")
+```
+
+```{r fw3-table, results='asis'}
+emit_table(SM[["fernow_WS-3"]], "fernow_WS-3 — C–Q band synchrony, settled pre vs post")
+```
+
+```{r fw3-bars, fig.height=3, fig.cap=fig_n("fernow_WS-3 — pre vs post C–Q band metrics, ±1 SE.")}
+plot_wave_bars(SM[["fernow_WS-3"]], "fernow_WS-3 — C–Q band metrics, pre vs post (±1 SE)")
+```
+
+---
+
+# fernow_WS-5 — timber harvest (pulse)
+
+The clearcut is the classic nitrate-export disturbance — forest removal releases nitrate, so a
+C–Q change across 2007 is plausible here. One flagged multi-month gap (~9% interpolated).
+
+```{r fw5-prov, results='asis'}
+cat(prov_line(D[["fernow_WS-5"]]))
+```
+
+```{r fw5-resid, fig.height=3.4, fig.cap=fig_n("fernow_WS-5 — C–Q residual (green) + derivative (orange); phases shaded, dashed = disturbance.")}
+plot_resid(D[["fernow_WS-5"]], STEP["fernow_WS-5"], paste(label["fernow_WS-5"], "— C–Q residual & derivative"))
+```
+
+```{r fw5-wc, fig.height=4.6, fig.cap=fig_n("fernow_WS-5 — C–Q wavelet coherence.")}
+plot_wc(WC[["fernow_WS-5"]], STEP["fernow_WS-5"], "fernow_WS-5 — C–Q wavelet coherence")
+```
+
+```{r fw5-trace, fig.height=5.2, fig.cap=fig_n("fernow_WS-5 — annual-band C–Q metrics through time.")}
+plot_band_trace(TR[["fernow_WS-5"]], "fernow_WS-5 — C–Q synchrony at the annual band, through time")
+```
+
+```{r fw5-table, results='asis'}
+emit_table(SM[["fernow_WS-5"]], "fernow_WS-5 — C–Q band synchrony, settled pre vs post")
+```
+
+```{r fw5-bars, fig.height=3, fig.cap=fig_n("fernow_WS-5 — pre vs post C–Q band metrics, ±1 SE.")}
+plot_wave_bars(SM[["fernow_WS-5"]], "fernow_WS-5 — C–Q band metrics, pre vs post (±1 SE)")
+```
+
+---
+
+# Cross-site summary
+
+Post-minus-pre change in the four C–Q band metrics per site, each Δ with its propagated SE. All
+sites share the physical annual band and identical metric scales, so they compare directly despite
+different native grids.
+
+```{r summary}
+sm_all <- bind_rows(SM, .id = "site")
+delta <- metrics_long(sm_all, c("site", "phase")) %>%
+  pivot_wider(names_from = phase, values_from = c(value, se)) %>%
+  mutate(delta = value_post - value_pre, delta_se = sqrt(se_pre^2 + se_post^2),
+         site = factor(site, sites))
+```
+
+```{r summary-table, results='asis'}
+cat(kable(delta %>% transmute(site, metric = metric_labs[as.character(metric)],
+                              pre = value_pre, post = value_post, delta, delta_se),
+          digits = 2, caption = "pre → post change in C–Q band metrics, all sites (delta_se = propagated ±1 SE)"), sep = "\n")
+```
+
+```{r summary-fig, fig.height=4.5, fig.cap=fig_n("Post − pre change per site, faceted by band metric (free y), ±1 propagated SE. The C–Q read against P–Q (Analysis IV): a noisier, weaker coupling.")}
+ggplot(delta, aes(site, delta, fill = site)) +
+  geom_col() +
+  geom_errorbar(aes(ymin = delta - delta_se, ymax = delta + delta_se), width = 0.25, colour = "black", na.rm = TRUE) +
+  geom_hline(yintercept = 0, colour = "grey70") +
+  facet_wrap(~ metric, scales = "free_y", labeller = as_labeller(metric_labs)) +
+  scale_fill_brewer(palette = "Set2", guide = "none") +
+  labs(title = "Post − pre change by C–Q band metric (free y axes; ±1 SE)", x = NULL, y = "post − pre") +
+  theme(axis.text.x = element_text(angle = 40, hjust = 1))
+```
+
+**Takeaways — the wavelet on a less-causal coupling.** Read against Analysis IV (P→Q): rainfall
+drives discharge almost mechanically, and there the normalized coherence saturated near 1 while
+cross-power/amplitude carried the story. C–Q is the harder case the study was built to reach —
+nitrate is only *partly* set by flow. The pre-fit exponent `b` (each residual subtitle) says
+whether a site is near-chemostatic (`b≈0`, nitrate roughly flow-independent) or chemodynamic; the
+band metrics say whether even that partial coupling is *seasonally organized* and whether the
+disturbance — especially the two that hit nitrogen directly (hbef Ca, fernow WS-3 acidification) —
+reshapes it. Where P→Q's discharge channel was near-silent at the chemistry sites, C–Q is exactly
+where a signal *can* live. The method's limits carry over intact: coherence remains the least
+trustworthy channel, the honest resolution is set by each site's sampling (reported per panel),
+and a coarser record simply cannot see short periods — shown, not hidden.
+```

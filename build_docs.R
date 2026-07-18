@@ -18,7 +18,8 @@ rmds <- c(# idealised leg (syn_data) — reproducible from git (deterministic ge
           # (../data + ../qualifying_disturbances.csv), so it only renders where those exist.
           "ms_data/prep_ms_series.Rmd",
           "ms_data/analysis_03_central_tendency.Rmd",
-          "ms_data/analysis_04_wavelet_synchrony.Rmd")
+          "ms_data/analysis_04_wavelet_synchrony.Rmd",
+          "ms_data/analysis_05_cq_wavelet_synchrony.Rmd")
 
 for (rmd in rmds) {
   # one failing render (e.g. a prep/EDA notebook without the local pull) must not block the rest.
