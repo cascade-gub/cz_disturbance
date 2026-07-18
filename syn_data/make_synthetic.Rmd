@@ -26,23 +26,26 @@ output:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
-                      dev.args = list(bg = "#222222"))   # dark PNG canvas → matches darkly page
+                      dev.args = list(bg = "white"))   # native (light) PNG canvas; white matting added via CSS
 suppressMessages({ library(dplyr); library(tidyr); library(readr); library(ggplot2) })
-.pg <- "#222222"; .pn <- "#3d434b"; .fg <- "#e6e6e6"; .gr <- "#5e646c"   # dark plot palette
-theme_set(theme_bw(base_size = 11) + theme(
-  plot.background  = element_rect(fill = .pg, colour = NA),
-  panel.background = element_rect(fill = .pn, colour = NA),
-  panel.border     = element_rect(colour = .gr, fill = NA),
-  panel.grid.major = element_line(colour = .gr),
-  panel.grid.minor = element_blank(),
-  text = element_text(colour = .fg), axis.text = element_text(colour = .fg),
-  axis.ticks = element_line(colour = .gr),
-  legend.background = element_rect(fill = .pg, colour = NA),
-  legend.key = element_rect(fill = .pg, colour = NA),
-  strip.background = element_rect(fill = "#333333", colour = .gr),
-  strip.text = element_text(colour = .fg), legend.position = "bottom"))
+# Native light ggplot theme — figures keep their default colour scheme and sit on the
+# white CSS matting (see the `figure-matting` chunk) so they stay legible on the darkly page.
+theme_set(theme_bw(base_size = 11) + theme(legend.position = "bottom"))
 set.seed(42)          # whole-document reproducibility; datasets draw sequentially
 OUT_DIR <- "."        # knit dir == this file's dir → CSVs land in syn_data/
+```
+
+```{css figure-matting, echo=FALSE}
+/* White matting behind every figure: native light plots read cleanly on the darkly page. */
+.main-container img,
+div.figure img {
+  background-color: #ffffff;
+  padding: 10px;
+  border-radius: 6px;
+  box-sizing: border-box;
+  max-width: 100%;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+}
 ```
 
 Three idealized series, each `time / climate / response`. `climate` is the exogenous
