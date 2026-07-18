@@ -41,17 +41,17 @@
     <li><a href="make_synthetic.html">Data generator</a>
       <span class="desc">How the three series are built (log-linear response, morph mechanism, per-scenario disturbance).</span></li>
     <li><a href="analysis_01_central_tendency.html">Analysis I — central tendency &amp; peak synchrony</a>
-      <span class="desc">Log-space moments and peak-derived synchrony, pre vs post.</span></li>
+      <span class="desc">Per-channel moments (mean, variance) and joint covariance, plus peak-derived synchrony — response in log space, pre vs post.</span></li>
     <li><a href="analysis_02_wavelet_synchrony.html">Analysis II — wavelet synchrony</a>
-      <span class="desc">Morlet coherence/cross-power at the P≈500 band, plus the transition Doppler chirp.</span></li>
+      <span class="desc">Morlet band metrics (coherence, cross-power, apparent lag, amplitude ratio) at P≈500, pre vs post — coherence saturates near 1, so collapsing cross-power/amplitude carry the decoupling.</span></li>
   </ul>
 
-  <h2>Real-data — MacroSheds watersheds (the same methods, stress-tested)</h2>
+  <h2>Real-data — MacroSheds watersheds (the same methods, tested)</h2>
   <ul>
     <li><a href="prep_ms_series.html">Prep</a>
       <span class="desc">Carves five screened MacroSheds disturbances into the same climate(precip)/response(discharge)/phase shape the analyses read.</span></li>
     <li><a href="eda_timeseries.html">EDA — disturbance-site time series</a>
-      <span class="desc">Daily discharge &amp; precipitation, grab-sample NO3 &amp; conductance across the five MacroSheds disturbance sites: coverage, within-site stacks, and z-scored synchrony.</span></li>
+      <span class="desc">Daily discharge &amp; precipitation, grab-sample NO3 &amp; conductance across the five MacroSheds disturbance sites: coverage, within-site stacks, z-scored synchrony, and between-site overlays.</span></li>
     <li><a href="analysis_03_central_tendency.html">Analysis III — central tendency &amp; peak synchrony</a>
       <span class="desc">Analysis I's peak/moments method on real precip→discharge across five disturbances — where it frays off the idealised bench.</span></li>
     <li><a href="analysis_04_wavelet_synchrony.html">Analysis IV — wavelet synchrony</a>
