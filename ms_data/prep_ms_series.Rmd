@@ -1,6 +1,6 @@
 ---
-title: "Real-data prep — MacroSheds precip→discharge series with disturbance phases"
-subtitle: "Builds the tracked wide per-site CSVs (climate = precip, response = discharge, phase) that analyses 03 & 04 read"
+title: "Real-data prep — MacroSheds P→Q (daily) and C→Q (native-cadence) series"
+subtitle: "Builds the tracked per-site CSVs that analyses 03/04 (precip→discharge) and 05 (nitrate→discharge) read"
 author: "nic (nic@cascadeclimate.org)"
 date: "`r Sys.Date()`"
 # Knit → render in place, then copy the self-contained HTML to <repo-root>/docs for GitHub Pages.
@@ -196,8 +196,113 @@ one_panel <- function(s) {
 wrap_plots(lapply(series, one_panel), ncol = 1)
 ```
 
-The five `*__series_daily.csv` files are the **only tracked interface** between this prep and the
-two analyses — exactly as `synthetic_*.csv` are for `syn_data`. Regenerate them by knitting this
-notebook (it reads `../data/` + `../qualifying_disturbances.csv`, which require the local
-MacroSheds pull but are not needed to *run* 03/04).
+The five `*__series_daily.csv` files are the **P→Q interface** between this prep and analyses
+03/04 — exactly as `synthetic_*.csv` are for `syn_data`.
+
+---
+
+# C→Q series (nitrate concentration → discharge)
+
+The second leg (analysis 05) is the **concentration–discharge (C–Q)** relationship: driver =
+discharge `Q`, response = **stream nitrate concentration `C`** — a noisier, *less causal* coupling
+(nitrate is only partly set by flow; sources, hysteresis, dilution-vs-flushing all intervene). It
+is the real-data stress-test of the wavelet method against a weaker signal.
+
+Unlike precip/discharge, **nitrate is irregular grab samples** (weekly to ~3-weekly), so instead
+of forcing a common fine grid (which would *fabricate* most of the sparser records) each site is
+put on **its own native-cadence grid**: bin size = that site's median NO3 interval, each bin the
+**mean of the real samples in it** (nothing invented where data exist). The few empty bins are
+linearly interpolated and **flagged**; discharge (daily, complete) is averaged to the same grid.
+Analysis 05 runs the wavelet in native steps and rescales the period axis to **physical days**
+(period × `step_days`) so all sites share one axis despite different steps. Both channels are
+analyzed in **log space** (standard C–Q power-law): driver `log(Q)`, response `log(C)`.
+
+**`santa_barbara_MC06` is dropped here** — its nitrate is 44% empty months with a ~4-year gap, so
+a continuous wavelet there would read interpolation, not data. The remaining four have workable
+coverage (reported per site below).
+
+```{r cq-build}
+# per-site native NO3 cadence (median gap, days): hbef/fernow weekly, hjandrews ~3-weekly.
+cq_sites <- tibble::tribble(
+  ~tag,               ~step,
+  "hbef_w1",             7,
+  "hjandrews_GSWS10",   21,
+  "fernow_WS-3",         7,
+  "fernow_WS-5",         7)
+
+build_cq <- function(tag, step) {
+  row <- qd[qd$tag == tag, ]
+  ch <- read_csv(sprintf("../data/%s__chemistry_NO3_spCond.csv", tag), show_col_types = FALSE)
+  q  <- read_csv(sprintf("../data/%s__discharge_daily.csv",       tag), show_col_types = FALSE)
+  c0 <- ch %>% filter(grepl("NO3", var), val > 0,
+                      date >= row$window_start, date <= row$window_end) %>% arrange(date)
+  lo <- min(c0$date); hi <- max(c0$date)                        # nitrate is the limiting record
+  grid <- seq(lo, hi, by = paste(step, "days"))
+  binof <- function(d) pmin(pmax(floor(as.numeric(d - lo) / step) + 1, 1), length(grid))
+  cbin <- c0 %>% mutate(b = binof(date)) %>% group_by(b) %>% summarise(C = mean(val), .groups = "drop")
+  qbin <- q %>% filter(val > 0, date >= lo, date <= hi) %>%
+    mutate(b = binof(date)) %>% group_by(b) %>% summarise(Q = mean(val), .groups = "drop")
+  d <- tibble(b = seq_along(grid), date = grid) %>%
+    left_join(cbin, by = "b") %>% left_join(qbin, by = "b")
+  d$C_interp <- is.na(d$C); d$Q_interp <- is.na(d$Q)           # empty bins → interpolated (flagged)
+  d$C <- approx(seq_along(d$C), d$C, seq_along(d$C), rule = 2)$y
+  d$Q <- approx(seq_along(d$Q), d$Q, seq_along(d$Q), rule = 2)$y
+  ds <- row$disturbance_start; de <- row$disturbance_end
+  d %>% transmute(
+    time = b, date, Q, C,                                       # raw units; analysis 05 logs both
+    C_interp, Q_interp,
+    phase = factor(ifelse(date < ds, "pre", ifelse(date <= de, "disturbance", "post")),
+                   levels = c("pre", "disturbance", "post")),
+    step_days = step, site = tag)
+}
+
+cq <- lapply(seq_len(nrow(cq_sites)), function(i) build_cq(cq_sites$tag[i], cq_sites$step[i]))
+names(cq) <- cq_sites$tag
+```
+
+```{r cq-write}
+cq_paths <- vapply(names(cq), function(tag) {
+  f <- file.path(OUT_DIR, paste0(tag, "__cq_native.csv"))
+  write_csv(cq[[tag]] %>% mutate(Q = round(Q, 4), C = round(C, 6)), f)
+  f
+}, character(1))
+
+cq_summ <- bind_rows(lapply(cq, function(s) tibble(
+  site = s$site[1], step_days = s$step_days[1], n = nrow(s),
+  start = min(s$date), end = max(s$date),
+  pre_bins = sum(s$phase == "pre"), post_bins = sum(s$phase == "post"),
+  C_interp_pct = round(100 * mean(s$C_interp), 1),             # % of bins with no real NO3 sample
+  med_C = round(median(s$C), 3), med_Q = round(median(s$Q), 1))))
+kable(cq_summ, caption = "C→Q native-cadence series written to ms_data/ (one row per site; step_days = grid bin). Each site's NO3 n, pre/post bins, and % interpolated are the provenance analysis 05 reports.")
+```
+
+```{r cq-panels, fig.height=11, fig.cap=fig_n("C→Q assembled series: log(discharge) (blue) and log(nitrate) (green) on each site's native grid; interpolated (no-sample) bins marked, pre/post shaded, dashed = disturbance. Note the coarser hjandrews grid and fernow's flagged gap.")}
+cq_panel <- function(s) {
+  bands <- s %>% filter(phase != "disturbance") %>% group_by(phase) %>%
+    summarise(xmin = min(date), xmax = max(date), .groups = "drop")
+  td <- s$date[s$phase == "disturbance"]
+  long <- s %>% transmute(date, `log(Q)` = log(Q), `log(C) = log NO3` = log(C), C_interp) %>%
+    pivot_longer(c(`log(Q)`, `log(C) = log NO3`), names_to = "var")
+  ggplot() +
+    geom_rect(data = bands, aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf, fill = phase),
+              alpha = 0.30, inherit.aes = FALSE) +
+    geom_vline(xintercept = td, linetype = 2, colour = "grey60") +
+    geom_line(data = long, aes(date, value, colour = var), linewidth = 0.2) +
+    geom_rug(data = filter(long, C_interp, var == "log(C) = log NO3"),
+             aes(x = date), sides = "b", colour = "#d94801", alpha = 0.5, length = unit(0.03, "npc")) +
+    facet_wrap(~ var, ncol = 1, scales = "free_y") +
+    scale_fill_manual(values = c(pre = "#9ecae1", disturbance = "grey45", post = "#fdae6b"), guide = "none") +
+    scale_colour_manual(values = c(`log(Q)` = "#3182bd", `log(C) = log NO3` = "#238b45"), guide = "none") +
+    labs(title = sprintf("%s (step %d d)", s$site[1], s$step_days[1]), x = NULL, y = NULL)
+}
+wrap_plots(lapply(cq, cq_panel), ncol = 1)
+```
+
+---
+
+The `*__series_daily.csv` (five, P→Q) and `*__cq_native.csv` (four, C→Q) files are the **only
+tracked interface** between this prep and the analyses — exactly as `synthetic_*.csv` are for
+`syn_data`. Regenerate them by knitting this notebook (it reads `../data/` +
+`../qualifying_disturbances.csv`, which require the local MacroSheds pull but are not needed to
+*run* 03/04/05).
 ```
