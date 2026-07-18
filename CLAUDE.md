@@ -24,8 +24,17 @@ bench** for the methods, not a defect — how each method responds is the findin
   - Bash tool: `"/c/Program Files/R/R-4.6.1/bin/Rscript.exe" script.R`
   - PowerShell: `& "C:\Program Files\R\R-4.6.1\bin\Rscript.exe" script.R`
 - Packages: `rmarkdown, knitr, dplyr, tidyr, readr, ggplot2, patchwork` (all notebooks) plus
-  **`WaveletComp`** (`analysis_02`/`analysis_04` only). The `macrosheds` + `arrow` packages are
-  needed only to (re)build the raw pull, not to run the analyses.
+  **`WaveletComp`** (the wavelet notebooks `analysis_02`/`04`/`05`). The `macrosheds` + `arrow`
+  packages are needed only to (re)build the raw pull, not to run the analyses.
+- **Shared wavelet kernel:** the three wavelet notebooks source **`R/wavelet_kernel.R`** (tracked
+  R at repo root, `source("../R/wavelet_kernel.R")` from either leg dir) for the **whole** helper
+  family — `wco`, `band_trace`, `block_stat`, `wave_summary`, `plot_*`, `fit_pre`, `resid_trace`,
+  … plus the red-noise cross-power **significance** helpers. **Edit once, not three times.** Each
+  notebook builds its copies via `make_wavelet_kernel(cfg)` and injects them with `list2env(...,`
+  `environment())`, so call sites stay bare; `cfg` holds the handful of things that differ (band
+  `P_days`, native `step`, phase gating, `transition` phase, axis, guide marks, …). The
+  significance mask is analytic AR(1) red noise (Torrence & Compo 1998), so knits stay deterministic
+  (no `make.pval`, no RNG). Add a feature or fix a bug in the kernel and all three inherit it.
 
 ## Data layout & git
 

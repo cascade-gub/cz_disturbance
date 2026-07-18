@@ -107,258 +107,40 @@ not a clean sine, so — as analysis III already hinted — expect coherence to 
 ## Helpers
 
 ```{r helpers}
-# ---- small numerics -------------------------------------------------------------------------
-smooth_ma <- function(x, w = 61) as.numeric(stats::filter(x, rep(1 / w, w)))  # centered MA; NA at ±(w-1)/2 ends
-CMEAN     <- function(a) Arg(mean(exp(1i * a)))          # circular mean of angles (phase never averaged linearly)
-band_rows <- function(wc) which(abs(wc$Period - P) <= 0.05 * P)  # the few scale-rows within ±5% of P
+# All wavelet helpers now live in R/wavelet_kernel.R (sourced in setup) — edit once, not three
+# times. Build THIS notebook's copies from a small config and inject them into the chunk
+# environment, so every call site below stays bare (wco(df), band_trace(wc, df), plot_wc(...), ...).
+# Config = the real P→Q leg: annual band (P = 365 d, daily so step = 1), an episodic precip driver
+# whose annual amplitude is often ~noise ⇒ PHASE GATING on (blank φ/lag where the driver has no band
+# signal; report settled φ/lag only where block phases concentrate, R ≥ 0.5); real pre/dist/post
+# phases (no `transition`); calendar-quarter shading; the lag facet breaks at the ±π wrap and shows
+# the antiphase rails. See tickets/wavelet_significance_mask.plan.md and R/wavelet_kernel.R.
+list2env(make_wavelet_kernel(list(
+  P_days         = P,                          # 365 — annual band in days (daily data ⇒ step = 1)
+  phase_gate     = TRUE,                         # precip barely oscillates at P ⇒ gate φ/lag to NA there
+  PHASE_MIN_AMP  = PHASE_MIN_AMP,                # 0.5 — trace gate on driver band amplitude
+  PHASE_MIN_R    = PHASE_MIN_R,                  # 0.5 — settled gate on block-phase concentration
+  has_transition = FALSE,                        # real phases are pre / disturbance / post
+  season         = TRUE,                         # alternating calendar-quarter shading
+  trace_x        = "time",
+  lag_wrap_break = TRUE,                          # break the lag line at ±π; draw the ±½-yr antiphase rails
+  lag_lab        = "app. lag (d)",
+  smooth_w       = 61,                            # resid-derivative smoothing window (days)
+  lowerPeriod    = 4, upperPeriod = 730,          # ~a week → two years (week/month/year guides in view)
+  wc_marks       = c("1 wk" = 7, "1 mo" = 30, "3 mo" = 91, "1 yr" = 365),
+  dist_vline     = "grey70",
+  include_phase_R = TRUE,                          # settled table carries the phase_R column
+  gain_fmt       = "%.3f",
+  timelab        = "time (days)", periodlab = "period (days)",
+  x_lab          = "time (days)",                  # trace/resid x-axis label (04 uses "time (days)")
+  resid_sub      = function(g, L, step)
+    sprintf("pre-fit predictor:  log(response)(t) ≈ %.3f · climate(t − %d)", g, L),
+  table_note     = "· phase_R = phase concentration among the phase-defined steps (φ/lag → NA if it ever drops < 0.5). A high phase_R is NOT proof of a real annual coupling — read **xpower**: where it is small (chemistry sites, e.g. hbef ≈ 0.03) a large lag is a phase angle at a band the driver barely occupies, not a genuine delay; a strong annual coupling (hjandrews, xpower ≈ 0.4) shows both."
+)), environment())
 
-# wc.image styling is identical across all five site spectra — only the object + title vary.
-# Horizontal dashed guides at a week / month / year. The period axis is log2, so a period p sits
-# at y = log2(p); graphics.reset = FALSE keeps wc.image's coordinate system live to annotate over.
-wc_marks <- c("1 wk" = 7, "1 mo" = 30, "3 mo" = 91, "1 yr" = 365)
-plot_wc <- function(wc, df, main) {
-  op <- par(bg = "white", fg = "black", col.axis = "black", col.lab = "black", col.main = "black")
-  on.exit(par(op))
-  wc.image(wc, which.image = "wc", plot.arrow = TRUE, plot.contour = FALSE,
-           color.key = "interval", timelab = "time (days)", periodlab = "period (days)",
-           legend.params = list(lab = "wavelet coherence"), main = main, graphics.reset = FALSE)
-  abline(h = log2(wc_marks), lty = 2, col = "black", lwd = 1.4)                 # week / month / year guides
-  add_xpower_contour(df, wc)             # red-noise 95% CROSS-POWER significance (T&C 1998; kernel)
-  usr <- par("usr")
-  text(x = usr[1] + 0.01 * (usr[2] - usr[1]), y = log2(wc_marks), labels = names(wc_marks),
-       adj = c(0, -0.4), font = 2, cex = 0.9, col = "black")
-}
-
-# ---- WaveletComp wrapper --------------------------------------------------------------------
-# Analyzed on climate (precip) vs log(response) (log discharge).
-# loess.span = 0: no detrending — the analyzed range (4–730 d) sits below any decadal trend,
-#   and standardization is then exactly /sd(x), making the ×sd amplitude rescale in band_trace exact.
-# my.pair ⇒ Angle = phase.climate − phase.log_response, so climate-leads is +.
-# period range spans ~a week → two years so the week / month / year guide lines are all in view
-# (see plot_wc). Widening the range leaves the band metrics at P unchanged — band_trace/wave_summary
-# read the same ±5%-of-365 scale rows, which sit comfortably inside 4…730 d.
-wco <- function(df)
-  analyze.coherency(as.data.frame(df[, c("climate", "log_response")]),
-                    my.pair = c("climate", "log_response"), loess.span = 0,
-                    dt = 1, dj = 1/20, lowerPeriod = 4, upperPeriod = 730,
-                    make.pval = FALSE, verbose = FALSE)
-
-# ---- collapse the wc object to one time-resolved series at the P band ------------------------
-band_trace <- function(wc, df) {
-  bi   <- band_rows(wc)
-  sd_c <- sd(df$climate); sd_r <- sd(df$log_response)      # the constants WaveletComp divided out (loess.span=0)
-  ang  <- apply(wc$Angle[bi, , drop = FALSE], 2, CMEAN)    # per-time band phase difference
-  coi  <- df$time >= EF & df$time <= nrow(df) - EF          # trustworthy (outside COI) mask
-  ax   <- colMeans(wc$Ampl.x[bi, , drop = FALSE])          # DRIVER (climate) band amplitude, per time
-  ok   <- ax >= PHASE_MIN_AMP * median(ax[coi])            # phase defined only where the driver oscillates at the band
-  tibble(time       = df$time, date = df$date,
-         phase      = df$phase,
-         coherence  = colMeans(wc$Coherence[bi, , drop = FALSE]),
-         xpower     = colMeans(wc$Power.xy[bi, , drop = FALSE]),                # shared-oscillation power at band
-         amp_ratio  = colMeans(wc$Ampl.y[bi, , drop = FALSE]) /
-                      colMeans(wc$Ampl.x[bi, , drop = FALSE]) * (sd_r / sd_c),  # ×sd: undo standardization → physical band-amp ratio
-         driver_amp = ax,
-         angle      = ifelse(ok, ang, NA_real_),                               # gated: undefined where driver has no band signal
-         lag        = ifelse(ok, ang / (2 * pi) * P, NA_real_),                # phase → days (blanked where φ undefined)
-         phase_ok   = ok,                                                      # shared determinacy flag (trace + table)
-         coi_ok     = coi)
-}
-
-# ---- settled pre/post summary with block SEs ------------------------------------------------
-# One estimate per P-long (annual) cycle in a COI-buffered window, then value ± dispersion/√n_blocks.
-block_stat <- function(t, v, circ = FALSE) {
-  b   <- (t - min(t)) %/% P                                # blocks on the FULL window (aligned across metrics)
-  bv  <- vapply(split(v, b), function(vi) {                # one estimate per block, dropping gated-out (NA) steps
-           vi <- vi[!is.na(vi)]
-           if (!length(vi)) NA_real_ else if (circ) CMEAN(vi) else mean(vi)
-         }, numeric(1))
-  bv  <- bv[!is.na(bv)]                                    # keep only blocks that carried signal
-  n   <- length(bv)
-  if (circ) {
-    R    <- if (n) Mod(mean(exp(1i * bv))) else NA_real_   # resultant length of block phases (1 = locked, 0 = scattered)
-    disp <- if (n && R < 1) sqrt(-2 * log(R)) else 0       # circular sd
-  } else { R <- NA_real_; disp <- if (n > 1) sd(bv) else NA_real_ }
-  list(value = if (!n) NA_real_ else if (circ) CMEAN(bv) else mean(bv),
-       se    = if (n > 1) disp / sqrt(n) else NA_real_, n = n, R = R)
-}
-
-# Settled windows come from the `phase` column: buffer EF from BOTH the series ends and the
-# disturbance. Real phases are pre / disturbance / post (no synthetic "transition"); the
-# disturbance may be a single day or a short span (fernow_WS-5), so we buffer from its full extent.
-wave_summary <- function(tr) {
-  ds <- min(tr$time[tr$phase == "disturbance"])          # first disturbance step
-  de <- max(tr$time[tr$phase == "disturbance"])          # last disturbance step (span for WS-5)
-  N  <- max(tr$time)
-  wins <- list(pre  = tr$time >= EF      & tr$time <= ds - EF,     # ≥ EF from series start AND from disturbance onset
-               post = tr$time >= de + EF & tr$time <= N  - EF)     # ≥ EF from disturbance end AND from series end
-  one <- function(sel) {
-    t  <- tr$time[sel]
-    co <- block_stat(t, tr$coherence[sel]); xp <- block_stat(t, tr$xpower[sel])
-    ar <- block_stat(t, tr$amp_ratio[sel]); an <- block_stat(t, tr$angle[sel], circ = TRUE)
-    # Report φ/lag only where the block phases actually concentrate: need ≥2 signal-bearing blocks
-    # (a lone block gives R=1 by construction) AND R ≥ PHASE_MIN_R. Otherwise the phase is scattered
-    # (or undefined) and printing a point value would be spurious → NA.
-    ph_ok <- !is.na(an$R) && an$n >= 2 && an$R >= PHASE_MIN_R
-    phi   <- if (ph_ok) an$value else NA_real_
-    phise <- if (ph_ok) an$se    else NA_real_
-    tibble(n_blocks  = co$n,                                            # cycles the SEs rest on
-           coherence = co$value, coherence_se = co$se,
-           xpower    = xp$value, xpower_se    = xp$se,
-           amp_ratio = ar$value, amp_ratio_se = ar$se,
-           phi       = phi,                    phi_se = phise,           # phase difference φ, radians (circular SE)
-           lag       = phi / (2*pi) * P,    lag_se = phise / (2*pi) * P, # same φ in day units
-           phase_R   = an$R, phase_n = an$n)                             # phase concentration (0–1) + blocks it rests on
-  }
-  bind_rows(pre = one(wins$pre), post = one(wins$post), .id = "phase") %>%
-    mutate(phase = factor(phase, c("pre", "post")))
-}
-
-# ---- model-based residual (whole series, log space) -----------------------------------------
-# Predict log(response) from a pre-fit predictor: predicted = gain · climate(t − lag). lag & gain
-# are fit on `pre` only (cross-correlation peak + no-intercept OLS), so the residual sits at ~0
-# through pre and departs where coupling changes.
-fit_pre <- function(df) {
-  pre <- df[df$phase == "pre", ]; cl <- pre$climate; rs <- pre$log_response; n <- length(rs)
-  Ls  <- 0:round(0.6 * P)                                              # physically plausible lags only (< ~0.6 season)
-  cr  <- vapply(Ls, function(L) cor(rs[(L + 1):n], cl[seq_len(n - L)]), numeric(1))  # cor(log(response)(t), climate(t−L))
-  L   <- Ls[which.max(cr)]
-  x   <- cl[seq_len(n - L)]; y <- rs[(L + 1):n]
-  list(lag = L, gain = sum(x * y) / sum(x * x))                        # OLS slope, no intercept
-}
-
-resid_trace <- function(df) {
-  fp <- fit_pre(df); L <- fp$lag; N <- nrow(df)
-  pred <- rep(NA_real_, N); if (L < N) pred[(L + 1):N] <- fp$gain * df$climate[seq_len(N - L)]
-  resid <- df$log_response - pred
-  out <- tibble(time = df$time, phase = df$phase,
-                resid  = resid,
-                dresid = c(NA, diff(smooth_ma(resid, 61))))            # smooth THEN diff so d/dt isn't pure noise
-  attr(out, "lag") <- L; attr(out, "gain") <- fp$gain; out
-}
-
-# ---- shared plotting furniture (band shading matches analysis III) --------------------------
-phase_fill <- c(pre = "#9ecae1", disturbance = "grey45", post = "#fdae6b")
-bar_fill   <- phase_fill[c("pre", "post")]
-phase_bands <- function(ph) ph %>% filter(phase != "disturbance") %>%
-  group_by(phase) %>% summarise(xmin = min(time), xmax = max(time), .groups = "drop")
-
-phase_band_layers <- function(d) {
-  bands <- phase_bands(d); td <- d$time[d$phase == "disturbance"]
-  list(geom_rect(data = bands, aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf, fill = phase),
-                 alpha = 0.30, inherit.aes = FALSE),
-       geom_vline(xintercept = td, linetype = 2, colour = "grey70"),
-       scale_fill_manual(values = phase_fill, guide = "none"))
-}
-
-# alternating calendar-quarter (3-month "season") shading in the plot's x units — a light seasonal
-# reference laid over the phase bands so both the disturbance context and the annual rhythm read.
-# Needs a `date` column alongside `xcol`.
-season_layer <- function(d, xcol = "time") {
-  q  <- (as.integer(format(d$date, "%m")) - 1) %/% 3 + 1
-  yr <- as.integer(format(d$date, "%Y"))
-  r  <- tibble(x = d[[xcol]], qi = yr * 4 + q, q = q) %>%
-    group_by(qi) %>% summarise(xmin = min(x), xmax = max(x), odd = first(q) %% 2 == 1, .groups = "drop") %>%
-    filter(odd)
-  geom_rect(data = r, aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf),
-            fill = "grey20", alpha = 0.14, inherit.aes = FALSE)   # every other 3-month season
-}
-
-# whole-series residual + its smoothed derivative on a secondary axis, phases shaded AND labelled.
-plot_resid <- function(df, title) {
-  rt <- resid_trace(df); L <- attr(rt, "lag"); g <- attr(rt, "gain")
-  bands <- phase_bands(df)
-  ytop <- max(abs(rt$resid), na.rm = TRUE)
-  sc   <- ytop / max(abs(rt$dresid), na.rm = TRUE)
-  ggplot() +
-    phase_band_layers(df) +
-    season_layer(df, "time") +
-    geom_hline(yintercept = 0, colour = "grey70", linewidth = 0.3) +
-    geom_line(data = rt, aes(time, dresid * sc), colour = "#d94801", linewidth = 0.25, na.rm = TRUE) +
-    geom_line(data = rt, aes(time, resid),       colour = "#238b45", linewidth = 0.3, na.rm = TRUE) +
-    geom_text(data = mutate(bands, x = (xmin + xmax) / 2),
-              aes(x = x, y = ytop, label = phase), vjust = 1, size = 3, colour = "grey25") +
-    scale_y_continuous(sec.axis = sec_axis(~ . / sc, name = "d(residual)/dt  (smoothed, orange)")) +
-    labs(title = title, x = "time (days)", y = "residual = log(response) − predicted  (green)",
-         subtitle = sprintf("pre-fit predictor:  log(response)(t) ≈ %.3f · climate(t − %d)", g, L))
-}
-
-# time-resolved band metrics; COI-contaminated edges blanked; phases shaded.
-metric_labs <- c(coherence = "coherence", xpower = "cross power", amp_ratio = "amp ratio", lag = "app. lag (d)")
-# segment id that starts a NEW run at every gap (NA) and — for a circular metric — at every
-# ±π branch-cut crossing (adjacent points that jump more than `jump`). geom_line grouped by this
-# never connects across a wrap, so the ±P/2 "flip" draws as points on the antiphase rails rather
-# than a spurious near-vertical delay change.
-seg_id <- function(v, jump = Inf) {
-  d   <- abs(c(NA, diff(v)))
-  cumsum(is.na(v) | (!is.na(d) & d > jump))
-}
-plot_band_trace <- function(tr, title) {
-  m <- names(metric_labs)
-  wide <- tr %>% mutate(across(all_of(m), ~ ifelse(coi_ok, ., NA_real_)))
-  long <- bind_rows(lapply(m, function(mm)
-    tibble(time = wide$time, metric = mm, value = wide[[mm]],
-           seg = seg_id(wide[[mm]], if (mm == "lag") P/2 else Inf)))) %>%   # break lag at wraps
-    mutate(metric = factor(metric, m))
-  # In the lag facet only: mark 0 and the ±P/2 antiphase rails and name them — so a value pinned
-  # near ±P/2 reads as "antiphase (±½ yr)", NOT a real 6-month delay.
-  lf   <- factor("lag", m)
-  rail <- tibble(metric = lf, y = c(-P/2, P/2))
-  zero <- tibble(metric = lf, y = 0)
-  note <- tibble(metric = lf, time = max(tr$time), y = P/2, lab = "antiphase (±½ yr)")
-  ggplot() +
-    phase_band_layers(tr) +
-    season_layer(tr, "time") +
-    geom_hline(data = rail, aes(yintercept = y), linetype = 2, colour = "grey55", linewidth = 0.3) +
-    geom_hline(data = zero, aes(yintercept = y), linetype = 1, colour = "grey55", linewidth = 0.3) +
-    geom_text(data = note, aes(time, y, label = lab), hjust = 1, vjust = -0.4, size = 2.6, colour = "grey45") +
-    geom_line(data = long, aes(time, value, group = interaction(metric, seg)), linewidth = 0.3, na.rm = TRUE) +
-    facet_wrap(~ metric, scales = "free_y", ncol = 1, strip.position = "left",
-               labeller = as_labeller(metric_labs)) +
-    labs(title = title, x = "time (days)", y = NULL)
-}
-
-# reshape a summary tibble to long (id keys × metric × value × se).
-metrics_long <- function(sm, keys) {
-  m <- names(metric_labs)
-  val <- sm %>% select(all_of(c(keys, m))) %>%
-    pivot_longer(all_of(m), names_to = "metric", values_to = "value")
-  se  <- sm %>% select(all_of(c(keys, paste0(m, "_se")))) %>%
-    rename_with(~ sub("_se$", "", .x), all_of(paste0(m, "_se"))) %>%
-    pivot_longer(all_of(m), names_to = "metric", values_to = "se")
-  left_join(val, se, by = c(keys, "metric")) %>% mutate(metric = factor(metric, m))
-}
-
-# pre/post bars per metric, ±1 SE (block SE) so effect size is read against uncertainty.
-plot_wave_bars <- function(sm, title) {
-  dat <- metrics_long(sm, "phase")
-  ggplot(dat, aes(phase, value, fill = phase)) +
-    geom_col(width = 0.7) +
-    geom_errorbar(aes(ymin = value - se, ymax = value + se), width = 0.25, colour = "black", na.rm = TRUE) +
-    facet_wrap(~ metric, scales = "free_y", nrow = 1, labeller = as_labeller(metric_labs)) +
-    scale_fill_manual(values = bar_fill, guide = "none") +
-    labs(title = title, x = NULL, y = NULL)
-}
-
-# the settled pre/post table — same columns every site.
-emit_table <- function(sm, caption)
-  cat(kable(sm %>% select(phase, n_blocks, coherence, xpower, amp_ratio, phi, lag, phase_R),
-            digits = 2, caption = paste(caption,
-              "· phase_R = phase concentration among the phase-defined steps (φ/lag → NA if it ever drops < 0.5). A high phase_R is NOT proof of a real annual coupling — read **xpower**: where it is small (chemistry sites, e.g. hbef ≈ 0.03) a large lag is a phase angle at a band the driver barely occupies, not a genuine delay; a strong annual coupling (hjandrews, xpower ≈ 0.4) shows both.")),
-      sep = "\n")
-
-# ---- "where does the coupling live" diagnostic ----------------------------------------------
-# Time-averaged cross-wavelet power as a function of PERIOD (rows are periods, cols are times in
-# the wc matrices → rowMeans collapses time). Shared P–Q power should peak at SHORT (event) periods,
-# not at the annual band — the honest picture of an episodic driver.
-# `power` = the observed time-mean cross-power; `ref` = the red-noise 95% level for that time-mean
-# (analytic AR(1), DOF-inflated for the averaging — see R/wavelet_kernel.R xpower_sig_ref_tavg).
-# n_a = the number of time columns rowMeans averages over (the full record).
-xpower_spectrum <- function(wc, df, site)
-  tibble(site = site, period = wc$Period, power = rowMeans(wc$Power.xy),
-         ref  = xpower_sig_ref_tavg(df, wc, n_a = ncol(wc$Power.xy)))
-
-# Annual-harmonic R² (cheap OLS on cos/sin at 365 d): how much of each channel's variance is a
-# clean annual cycle. Precip ≈ 0 (aseasonal driver) is the numeric root of the phase degeneracy.
+# Annual-harmonic R² (04-only diagnostic; cheap OLS on cos/sin at 365 d): how much of each channel's
+# variance is a clean annual cycle. Precip ≈ 0 (aseasonal driver) is the numeric root of the phase
+# degeneracy. Kept notebook-local — it is a one-off, not a shared wavelet helper.
 annual_r2 <- function(d) {
   w <- 2 * pi / P; C <- cos(w * d$time); S <- sin(w * d$time)
   r2 <- function(y) summary(lm(y ~ C + S))$r.squared
@@ -412,12 +194,12 @@ the phase *difference* wanders across `±π`, which the raw `φ→lag` map rende
 shows *where the shared oscillation actually is* — and, crucially, it **differs by site**.
 
 ```{r xpower-spectrum, fig.height=4.2, fig.cap=fig_n("Time-averaged cross-wavelet power vs period (log x), per site, with the red-noise 95% reference (dashed orange). The reference is the analytic AR(1) significance level for a TIME-AVERAGED cross-power (Torrence & Compo 1998, DOF-inflated for the averaging; calibrated against seeded surrogates — tight at event periods, mildly conservative at the annual band). Observed power (green) ABOVE it is shared oscillation beyond what two independent red-noise series would produce. The annual band (grey dashed, 365 d) carries a genuine shared-power peak at hjandrews (dominant, clears the reference) and fernow (alongside a short-period event shoulder), but at hbef the shared power is broadband and event-heavy with only a weak annual bump. Un-normalized cross-power thus separates a real annual coupling from the degenerate case — a distinction the saturated coherence (≈1 everywhere) cannot make.")}
-xps <- bind_rows(Map(xpower_spectrum, WC, D, names(WC))) %>% mutate(site = factor(site, sites))
+xps <- bind_rows(Map(xpower_spectrum, WC, D, names(WC))) %>% mutate(id = factor(id, sites))  # kernel returns `id`
 ggplot(xps, aes(period, power)) +
   geom_vline(xintercept = P, linetype = 2, colour = "grey45") +
   geom_line(aes(period, ref), colour = "#d94801", linetype = 2, linewidth = 0.4) +   # red-noise 95%
   geom_line(colour = "#238b45", linewidth = 0.4) +
-  facet_wrap(~ site, scales = "free_y") +
+  facet_wrap(~ id, scales = "free_y") +
   scale_x_log10(breaks = c(7, 30, 91, 365, 730), labels = c("1wk", "1mo", "3mo", "1yr", "2yr")) +
   labs(title = "Where shared power lives: time-averaged cross-power vs period",
        subtitle = "green = observed mean cross-power · dashed orange = red-noise 95% reference",

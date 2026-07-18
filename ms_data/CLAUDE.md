@@ -154,6 +154,19 @@ differences from P→Q, all forced by nitrate being **irregular grab samples** (
 - **Coherence saturates.** On real data WaveletComp's normalized, smoothed coherence sits ≈0.9–1
   across the whole record at every site — as the synthetic *Desync* case warned, coherence alone
   is not a usable discriminator; cross-power & band amplitude carry the real story (IV).
+- **Shared kernel (04/05, and syn 02).** ALL wavelet helpers — `wco`, `band_trace`, `block_stat`,
+  `wave_summary`, `plot_*`, `fit_pre`, `resid_trace`, the significance helpers — live in
+  `../R/wavelet_kernel.R` and are built per-notebook via `make_wavelet_kernel(cfg)` +
+  `list2env(..., environment())`. **Edit once, not three times.** 04's config turns on phase
+  gating; 05's passes each site's native `step` (day↔bin rescaling) and a date axis. Only `cfg`
+  differs between notebooks; the code is one copy.
+- **Red-noise significance mask (04/05).** The honest quantity (cross-power) gets an analytic AR(1)
+  red-noise 95% reference (Torrence & Compo 1998), in that shared kernel. Two exhibits: a *time-averaged* reference on the "where shared power lives" figure
+  (cross-power vs period), and a *pointwise* significance contour on the coherence heatmap (kept
+  only where sustained ≥3 cycles, so it reads sustained coupling, not single-storm speckle). It is
+  **analytic → deterministic** (no `make.pval`, no surrogates); coherence significance would need
+  Monte Carlo and is deliberately not attempted. The `/Scale` normalization and the constants were
+  calibrated once against seeded AR(1) surrogates.
 - **Deterministic.** Given the tracked CSVs, 03/04 reproduce every number on re-knit
   (`make.pval = FALSE`, no RNG). Rebuild the CSVs by knitting `prep_ms_series.Rmd` (needs the
   local `../data` pull).

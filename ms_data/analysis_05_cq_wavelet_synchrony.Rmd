@@ -83,174 +83,39 @@ site's steps), and block SEs (one estimate per annual cycle; circular for phase)
 ## Helpers
 
 ```{r helpers}
-# ---- small numerics -------------------------------------------------------------------------
-CMEAN <- function(a) Arg(mean(exp(1i * a)))            # circular mean of angles
-smooth_ma <- function(x, w) { w <- max(3, w); as.numeric(stats::filter(x, rep(1 / w, w))) }
+# All wavelet helpers now live in R/wavelet_kernel.R (sourced in setup) — edit once, not three
+# times. Build THIS notebook's copies from a small config and inject them into the chunk
+# environment, so every call site below stays bare (wco(df, step), band_trace(wc, df, step), ...).
+# Config = the real C–Q leg: annual band (P = 365 DAYS) read on each site's NATIVE step grid, so
+# `step` (= step_days) is passed per site and every period/lag is rescaled to days; a date axis;
+# calendar-quarter shading; the period axis is relabelled to days via spec.period.axis. No phase
+# gating (the driver here is log Q, which does oscillate annually). channel meaning: climate = log Q,
+# log_response = log C — the code is identical. See tickets/wavelet_significance_mask.plan.md.
+list2env(make_wavelet_kernel(list(
+  P_days         = P_DAYS,                       # 365 — annual band in DAYS; step converts to native bins
+  phase_gate     = FALSE,
+  has_transition = FALSE,                        # real phases are pre / disturbance / post
+  season         = TRUE,
+  trace_x        = "date",                        # native grids differ ⇒ plot on the shared calendar axis
+  lag_wrap_break = FALSE,
+  lag_lab        = "app. lag (d)",
+  smooth_w       = function(step) round(90 / step),   # ~90-day resid-derivative window, in native bins
+  lowerPeriod    = 4,                             # 4 steps ≈ 4·step_days (WaveletComp coherence floor)
+  upperPeriod    = function(P, df) floor(nrow(df) / 3),  # WaveletComp's natural COI-safe scale limit
+  wc_marks       = c("3 mo" = 91, "1 yr" = 365, "2 yr" = 730),
+  spec_axis      = TRUE,                           # relabel the native-step period axis to physical days
+  dist_vline     = "grey70",
+  timelab        = "time (bins)", periodlab = "period",
+  resp_lab       = "C", drv_lab = "log(Q)",
+  resid_ylab     = "residual = log(C) − predicted (green)",
+  resid_sec      = "d(residual)/dt (smoothed, orange)",
+  resid_sub      = function(g, L, step)
+    sprintf("pre-fit C–Q predictor:  log(C)(t) ≈ %.2f · log(Q)(t − %d bins ≈ %d d)   [slope = C–Q exponent b]",
+            g, L, L * step)
+)), environment())
 
-# band scale-rows within ±5% of the annual band — in PHYSICAL days (Period is in native steps, ×step).
-band_rows <- function(wc, step) which(abs(wc$Period * step - P_DAYS) <= 0.05 * P_DAYS)
-
-# physical-period guide lines on the coherence image: a season (3 mo), a year, two years.
-wc_marks <- c("3 mo" = 91, "1 yr" = 365, "2 yr" = 730)
-plot_wc <- function(wc, step, main) {
-  op <- par(bg = "white", fg = "black", col.axis = "black", col.lab = "black", col.main = "black")
-  on.exit(par(op))
-  at_steps <- wc_marks / step                          # physical period → native-step position
-  keep <- at_steps >= min(wc$Period) & at_steps <= max(wc$Period)   # only marks the site can resolve
-  wc.image(wc, which.image = "wc", plot.arrow = TRUE, plot.contour = FALSE,
-           color.key = "interval", timelab = "time (bins)", periodlab = "period",
-           legend.params = list(lab = "wavelet coherence"), main = main, graphics.reset = FALSE,
-           spec.period.axis = list(at = at_steps[keep], labels = names(wc_marks)[keep]))
-  abline(h = log2(at_steps[keep]), lty = 2, col = "black", lwd = 1.4)          # season / year / 2-year guides
-}
-
-# ---- WaveletComp wrapper (native steps; dt = 1) ---------------------------------------------
-# Uncropped upper period: WaveletComp's natural limit (≈ N/3 steps, the largest COI-safe scale) —
-# the spectra show the full multi-year range, not a fixed crop. lowerPeriod = 4 steps (coherence
-# smoothing floor ⇒ the site's short-period limit, ≈ 4·step_days). loess.span = 0: standardization
-# is exactly /sd so the ×sd amplitude rescale stays exact.
-wco <- function(df, step)
-  analyze.coherency(as.data.frame(df[, c("climate", "log_response")]),
-                    my.pair = c("climate", "log_response"), loess.span = 0,
-                    dt = 1, dj = 1/20, lowerPeriod = 4, upperPeriod = floor(nrow(df) / 3),
-                    make.pval = FALSE, verbose = FALSE)
-
-# ---- collapse to one time-resolved series at the annual band --------------------------------
-band_trace <- function(wc, df, step) {
-  bi   <- band_rows(wc, step); EF <- round(sqrt(2) * P_DAYS / step)      # COI buffer, in steps
-  sd_c <- sd(df$climate); sd_r <- sd(df$log_response)
-  ang  <- apply(wc$Angle[bi, , drop = FALSE], 2, CMEAN)
-  tibble(time      = df$time, date = df$date, phase = df$phase,
-         coherence = colMeans(wc$Coherence[bi, , drop = FALSE]),
-         xpower    = colMeans(wc$Power.xy[bi, , drop = FALSE]),
-         amp_ratio = colMeans(wc$Ampl.y[bi, , drop = FALSE]) /
-                     colMeans(wc$Ampl.x[bi, , drop = FALSE]) * (sd_r / sd_c),
-         angle     = ang,
-         lag       = ang / (2 * pi) * P_DAYS,                             # phase → DAYS (physical annual band)
-         coi_ok    = df$time >= EF & df$time <= nrow(df) - EF)
-}
-
-# ---- settled pre/post summary with block SEs (one block per annual cycle, in steps) ---------
-block_stat <- function(t, v, blk, circ = FALSE) {
-  b  <- (t - min(t)) %/% blk
-  bv <- as.numeric(tapply(seq_along(t), b, function(i) if (circ) CMEAN(v[i]) else mean(v[i])))
-  n  <- length(bv)
-  if (circ) { R <- Mod(mean(exp(1i * bv))); disp <- if (R < 1) sqrt(-2 * log(R)) else 0 } else disp <- sd(bv)
-  list(value = if (circ) CMEAN(bv) else mean(bv), se = if (n > 1) disp / sqrt(n) else NA_real_, n = n)
-}
-
-# settled windows: buffer EF (steps) from both ends AND the disturbance. blk = annual cycle in steps.
-wave_summary <- function(tr, step) {
-  EF <- round(sqrt(2) * P_DAYS / step); blk <- max(2, round(P_DAYS / step))
-  ds <- min(tr$time[tr$phase == "disturbance"]); de <- max(tr$time[tr$phase == "disturbance"])
-  N  <- max(tr$time)
-  wins <- list(pre  = tr$time >= EF      & tr$time <= ds - EF,
-               post = tr$time >= de + EF & tr$time <= N  - EF)
-  one <- function(sel) {
-    t <- tr$time[sel]
-    co <- block_stat(t, tr$coherence[sel], blk); xp <- block_stat(t, tr$xpower[sel], blk)
-    ar <- block_stat(t, tr$amp_ratio[sel], blk); an <- block_stat(t, tr$angle[sel], blk, circ = TRUE)
-    tibble(n_blocks = co$n,
-           coherence = co$value, coherence_se = co$se,
-           xpower    = xp$value, xpower_se    = xp$se,
-           amp_ratio = ar$value, amp_ratio_se = ar$se,
-           phi       = an$value,                 phi_se = an$se,
-           lag       = an$value / (2*pi) * P_DAYS, lag_se = an$se / (2*pi) * P_DAYS)   # days
-  }
-  bind_rows(pre = one(wins$pre), post = one(wins$post), .id = "phase") %>%
-    mutate(phase = factor(phase, c("pre", "post")))
-}
-
-# ---- pre-fit C–Q predictor: log(C) ≈ b · log(Q)(t − lag). b = the C–Q power-law exponent -----
-fit_pre <- function(df, step) {
-  pre <- df[df$phase == "pre", ]; cl <- pre$climate; rs <- pre$log_response; n <- length(rs)
-  Ls  <- 0:max(1, round(0.6 * P_DAYS / step))                            # plausible lags < ~0.6 yr, in steps
-  cr  <- vapply(Ls, function(L) suppressWarnings(cor(rs[(L + 1):n], cl[seq_len(n - L)])), numeric(1))
-  L   <- Ls[which.max(replace(cr, is.na(cr), -Inf))]
-  x   <- cl[seq_len(n - L)]; y <- rs[(L + 1):n]
-  list(lag = L, gain = sum(x * y) / sum(x * x))
-}
-resid_trace <- function(df, step) {
-  fp <- fit_pre(df, step); L <- fp$lag; N <- nrow(df)
-  pred <- rep(NA_real_, N); if (L < N) pred[(L + 1):N] <- fp$gain * df$climate[seq_len(N - L)]
-  out <- tibble(time = df$time, date = df$date, phase = df$phase, resid = df$log_response - pred,
-                dresid = c(NA, diff(smooth_ma(df$log_response - pred, round(90 / step)))))
-  attr(out, "lag") <- L; attr(out, "gain") <- fp$gain; attr(out, "step") <- step; out
-}
-
-# ---- shared plotting furniture --------------------------------------------------------------
-phase_fill <- c(pre = "#9ecae1", disturbance = "grey45", post = "#fdae6b")
-bar_fill   <- phase_fill[c("pre", "post")]
-phase_bands <- function(ph) ph %>% filter(phase != "disturbance") %>%
-  group_by(phase) %>% summarise(xmin = min(date), xmax = max(date), .groups = "drop")
-phase_band_layers <- function(d) {
-  bands <- phase_bands(d); td <- d$date[d$phase == "disturbance"]
-  list(geom_rect(data = bands, aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf, fill = phase),
-                 alpha = 0.30, inherit.aes = FALSE),
-       geom_vline(xintercept = td, linetype = 2, colour = "grey70"),
-       scale_fill_manual(values = phase_fill, guide = "none"))
-}
-# alternating calendar-quarter (3-month "season") shading on the date axis — a light seasonal
-# reference over the phase bands (the annual rhythm; clearest on zoom).
-season_layer <- function(d) {
-  q  <- (as.integer(format(d$date, "%m")) - 1) %/% 3 + 1
-  yr <- as.integer(format(d$date, "%Y"))
-  r  <- tibble(x = d$date, qi = yr * 4 + q, q = q) %>%
-    group_by(qi) %>% summarise(xmin = min(x), xmax = max(x), odd = first(q) %% 2 == 1, .groups = "drop") %>%
-    filter(odd)
-  geom_rect(data = r, aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf),
-            fill = "grey20", alpha = 0.14, inherit.aes = FALSE)
-}
-
-plot_resid <- function(df, step, title) {
-  rt <- resid_trace(df, step); L <- attr(rt, "lag"); g <- attr(rt, "gain")
-  bands <- phase_bands(df); ytop <- max(abs(rt$resid), na.rm = TRUE)
-  sc <- ytop / max(abs(rt$dresid), na.rm = TRUE)
-  ggplot() + phase_band_layers(df) + season_layer(df) +
-    geom_hline(yintercept = 0, colour = "grey70", linewidth = 0.3) +
-    geom_line(data = rt, aes(date, dresid * sc), colour = "#d94801", linewidth = 0.25, na.rm = TRUE) +
-    geom_line(data = rt, aes(date, resid),       colour = "#238b45", linewidth = 0.3, na.rm = TRUE) +
-    geom_text(data = mutate(bands, x = xmin + (xmax - xmin)/2),
-              aes(x = x, y = ytop, label = phase), vjust = 1, size = 3, colour = "grey25") +
-    scale_y_continuous(sec.axis = sec_axis(~ . / sc, name = "d(residual)/dt (smoothed, orange)")) +
-    labs(title = title, x = NULL, y = "residual = log(C) − predicted (green)",
-         subtitle = sprintf("pre-fit C–Q predictor:  log(C)(t) ≈ %.2f · log(Q)(t − %d bins ≈ %d d)   [slope = C–Q exponent b]",
-                            g, L, L * step))
-}
-
-metric_labs <- c(coherence = "coherence", xpower = "cross power", amp_ratio = "amp ratio", lag = "app. lag (d)")
-plot_band_trace <- function(tr, title) {
-  m <- names(metric_labs)
-  long <- tr %>% mutate(across(all_of(m), ~ ifelse(coi_ok, ., NA_real_))) %>%
-    select(date, all_of(m)) %>% pivot_longer(-date, names_to = "metric") %>%
-    mutate(metric = factor(metric, m))
-  ggplot() + phase_band_layers(tr) + season_layer(tr) +
-    geom_line(data = long, aes(date, value), linewidth = 0.3, na.rm = TRUE) +
-    facet_wrap(~ metric, scales = "free_y", ncol = 1, strip.position = "left",
-               labeller = as_labeller(metric_labs)) +
-    labs(title = title, x = NULL, y = NULL)
-}
-
-metrics_long <- function(sm, keys) {
-  m <- names(metric_labs)
-  val <- sm %>% select(all_of(c(keys, m))) %>% pivot_longer(all_of(m), names_to = "metric", values_to = "value")
-  se  <- sm %>% select(all_of(c(keys, paste0(m, "_se")))) %>%
-    rename_with(~ sub("_se$", "", .x), all_of(paste0(m, "_se"))) %>%
-    pivot_longer(all_of(m), names_to = "metric", values_to = "se")
-  left_join(val, se, by = c(keys, "metric")) %>% mutate(metric = factor(metric, m))
-}
-plot_wave_bars <- function(sm, title) {
-  ggplot(metrics_long(sm, "phase"), aes(phase, value, fill = phase)) +
-    geom_col(width = 0.7) +
-    geom_errorbar(aes(ymin = value - se, ymax = value + se), width = 0.25, colour = "black", na.rm = TRUE) +
-    facet_wrap(~ metric, scales = "free_y", nrow = 1, labeller = as_labeller(metric_labs)) +
-    scale_fill_manual(values = bar_fill, guide = "none") + labs(title = title, x = NULL, y = NULL)
-}
-emit_table <- function(sm, caption)
-  cat(kable(sm %>% select(phase, n_blocks, coherence, xpower, amp_ratio, phi, lag),
-            digits = 2, caption = caption), sep = "\n")
-
-# per-site provenance line (n, cadence, % interpolated) — communicated on every panel.
+# per-site provenance line (n, cadence, % interpolated) — 05-only, kept notebook-local (not a
+# shared wavelet helper; it is a provenance formatter for the C–Q panels).
 prov_line <- function(d) sprintf(
   "**n = %d bins** (pre %d / post %d) · native step **%d d** · **%.0f%% of bins interpolated** (no NO3 sample).",
   nrow(d), sum(d$phase == "pre"), sum(d$phase == "post"), d$step_days[1], 100 * mean(d$C_interp))
@@ -291,6 +156,30 @@ cat(kable(prov, caption = "Per-site C–Q grid: native step, n bins, pre/post sp
 
 ---
 
+# Where the shared C–Q power lives
+
+The same diagnostic as analysis IV, on the noisier C–Q coupling: time-averaged cross-power vs
+period, with the analytic red-noise 95% reference (dashed orange). Power **above** the reference is
+shared C–Q oscillation beyond what two independent red-noise series would give. Because C–Q is
+only partly causal, expect the annual band to clear red noise more weakly than P→Q did — where it
+clears at all is where a genuine seasonal C–Q coupling survives the sampling and the noise.
+
+```{r cq-xpower-spectrum, fig.height=4.2, fig.cap=fig_n("Time-averaged C–Q cross-wavelet power vs physical period (log x, days via each site's native step), per site, with the red-noise 95% reference (dashed orange; analytic AR(1), DOF-inflated for the time-average — tight at event periods, mildly conservative at the annual band). Green above orange = shared C–Q power beyond independent red noise. The annual band (grey dashed, 365 d) is the band of interest; the coarsest site (hjandrews, 21-day steps) cannot resolve short periods, so its curve starts near ~3 months.")}
+# kernel xpower_spectrum(wc, df, id, step) → `id` + `period` (= Period × step, i.e. days here).
+xps <- bind_rows(Map(xpower_spectrum, WC, D, names(WC), STEP)) %>% mutate(id = factor(id, sites))
+ggplot(xps, aes(period, power)) +
+  geom_vline(xintercept = P_DAYS, linetype = 2, colour = "grey45") +
+  geom_line(aes(period, ref), colour = "#d94801", linetype = 2, linewidth = 0.4) +   # red-noise 95%
+  geom_line(colour = "#238b45", linewidth = 0.4) +
+  facet_wrap(~ id, scales = "free_y") +
+  scale_x_log10(breaks = c(30, 91, 365, 730), labels = c("1mo", "3mo", "1yr", "2yr")) +
+  labs(title = "Where shared C–Q power lives: time-averaged cross-power vs period",
+       subtitle = "green = observed mean cross-power · dashed orange = red-noise 95% reference",
+       x = "period (days, log scale)", y = "mean cross power")
+```
+
+---
+
 # hbef_w1 — chemical addition (pulse) · Ca
 
 The best-sampled site (near-weekly, ~6% interpolated). The Ca (wollastonite) addition acts on
@@ -301,11 +190,11 @@ cat(prov_line(D[["hbef_w1"]]))
 ```
 
 ```{r hbef-resid, fig.height=3.4, fig.cap=fig_n("hbef_w1 — C–Q model residual (green) + smoothed derivative (orange); phases shaded, dashed = disturbance. Subtitle gives the pre-fit C–Q exponent b.")}
-plot_resid(D[["hbef_w1"]], STEP["hbef_w1"], paste(label["hbef_w1"], "— C–Q residual & derivative"))
+plot_resid(D[["hbef_w1"]], paste(label["hbef_w1"], "— C–Q residual & derivative"), STEP["hbef_w1"])
 ```
 
 ```{r hbef-wc, fig.height=4.6, fig.cap=fig_n("hbef_w1 — C–Q wavelet coherence (time × period, period in days via the native step). Dashed guides = season / year / 2-year.")}
-plot_wc(WC[["hbef_w1"]], STEP["hbef_w1"], "hbef_w1 — C–Q wavelet coherence")
+plot_wc(WC[["hbef_w1"]], D[["hbef_w1"]], "hbef_w1 — C–Q wavelet coherence", STEP["hbef_w1"])
 ```
 
 ```{r hbef-trace, fig.height=5.2, fig.cap=fig_n("hbef_w1 — annual-band C–Q metrics through time; COI edges blanked, phases shaded.")}
@@ -332,11 +221,11 @@ cat(prov_line(D[["hjandrews_GSWS10"]]))
 ```
 
 ```{r hja-resid, fig.height=3.4, fig.cap=fig_n("hjandrews_GSWS10 — C–Q residual (green) + derivative (orange); phases shaded, dashed = disturbance.")}
-plot_resid(D[["hjandrews_GSWS10"]], STEP["hjandrews_GSWS10"], paste(label["hjandrews_GSWS10"], "— C–Q residual & derivative"))
+plot_resid(D[["hjandrews_GSWS10"]], paste(label["hjandrews_GSWS10"], "— C–Q residual & derivative"), STEP["hjandrews_GSWS10"])
 ```
 
 ```{r hja-wc, fig.height=4.6, fig.cap=fig_n("hjandrews_GSWS10 — C–Q wavelet coherence. Blank below ~3 months (21-day sampling).")}
-plot_wc(WC[["hjandrews_GSWS10"]], STEP["hjandrews_GSWS10"], "hjandrews_GSWS10 — C–Q wavelet coherence")
+plot_wc(WC[["hjandrews_GSWS10"]], D[["hjandrews_GSWS10"]], "hjandrews_GSWS10 — C–Q wavelet coherence", STEP["hjandrews_GSWS10"])
 ```
 
 ```{r hja-trace, fig.height=5.2, fig.cap=fig_n("hjandrews_GSWS10 — annual-band C–Q metrics through time.")}
@@ -364,11 +253,11 @@ cat(prov_line(D[["fernow_WS-3"]]))
 ```
 
 ```{r fw3-resid, fig.height=3.4, fig.cap=fig_n("fernow_WS-3 — C–Q residual (green) + derivative (orange); phases shaded, dashed = disturbance.")}
-plot_resid(D[["fernow_WS-3"]], STEP["fernow_WS-3"], paste(label["fernow_WS-3"], "— C–Q residual & derivative"))
+plot_resid(D[["fernow_WS-3"]], paste(label["fernow_WS-3"], "— C–Q residual & derivative"), STEP["fernow_WS-3"])
 ```
 
 ```{r fw3-wc, fig.height=4.6, fig.cap=fig_n("fernow_WS-3 — C–Q wavelet coherence.")}
-plot_wc(WC[["fernow_WS-3"]], STEP["fernow_WS-3"], "fernow_WS-3 — C–Q wavelet coherence")
+plot_wc(WC[["fernow_WS-3"]], D[["fernow_WS-3"]], "fernow_WS-3 — C–Q wavelet coherence", STEP["fernow_WS-3"])
 ```
 
 ```{r fw3-trace, fig.height=5.2, fig.cap=fig_n("fernow_WS-3 — annual-band C–Q metrics through time.")}
@@ -395,11 +284,11 @@ cat(prov_line(D[["fernow_WS-5"]]))
 ```
 
 ```{r fw5-resid, fig.height=3.4, fig.cap=fig_n("fernow_WS-5 — C–Q residual (green) + derivative (orange); phases shaded, dashed = disturbance.")}
-plot_resid(D[["fernow_WS-5"]], STEP["fernow_WS-5"], paste(label["fernow_WS-5"], "— C–Q residual & derivative"))
+plot_resid(D[["fernow_WS-5"]], paste(label["fernow_WS-5"], "— C–Q residual & derivative"), STEP["fernow_WS-5"])
 ```
 
 ```{r fw5-wc, fig.height=4.6, fig.cap=fig_n("fernow_WS-5 — C–Q wavelet coherence.")}
-plot_wc(WC[["fernow_WS-5"]], STEP["fernow_WS-5"], "fernow_WS-5 — C–Q wavelet coherence")
+plot_wc(WC[["fernow_WS-5"]], D[["fernow_WS-5"]], "fernow_WS-5 — C–Q wavelet coherence", STEP["fernow_WS-5"])
 ```
 
 ```{r fw5-trace, fig.height=5.2, fig.cap=fig_n("fernow_WS-5 — annual-band C–Q metrics through time.")}

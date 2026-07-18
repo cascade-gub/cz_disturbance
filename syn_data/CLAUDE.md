@@ -145,3 +145,11 @@ mirroring Desync but transient. Both ends are regime n.
 - All series are deterministic given seed 42; regenerate by knitting `make_synthetic.Rmd`
   in this directory (CSVs are written to `OUT_DIR = "."`). Old (independent-sine) datasets
   are archived in `pre_loglinear/`.
+- **Shared wavelet kernel (analysis_02).** `analysis_02` builds ALL its wavelet helpers (`wco`,
+  `band_trace`, `wave_summary`, `plot_*`, the significance helpers, …) from `../R/wavelet_kernel.R`
+  via `make_wavelet_kernel(cfg)` + `list2env(..., environment())` — the same kernel
+  `ms_data/analysis_04`/`05` use (edit once, not three times). 02's `cfg` is the synthetic leg:
+  `P_days = 500` (steps), no phase gating, a `transition` phase, no calendar shading. The red-noise
+  cross-power significance mask (Torrence & Compo 1998) is a validation exhibit here: shared power
+  towers over red noise at `P≈500` in Shift/Return and dips in Desync — the discrimination the
+  saturated coherence cannot make. Deterministic (no RNG).

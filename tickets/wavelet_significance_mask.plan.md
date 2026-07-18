@@ -1,7 +1,30 @@
-# PLAN — wavelet red-noise significance mask (+ minimal shared kernel)
+# PLAN — wavelet red-noise significance mask (+ shared kernel)
 
 Implementation plan for `wavelet_significance_mask.md`. Read that ticket first for the *why*;
 this file is the *how*, grounded in the current state of the three notebooks.
+
+## STATUS: IMPLEMENTED (both phases, output-preserving, verified)
+
+- **Phase 1 (mask):** `R/wavelet_kernel.R` gained `ar1_spectrum`, `xpower_sig_level` (pointwise
+  field), `xpower_sig_ref_tavg` (DOF-inflated time-average), `add_xpower_contour`. Wired into all
+  three notebooks: a persistence-filtered significance **contour** on the coherence heatmaps **and**
+  a red-noise 95% **reference** on the cross-power-vs-period figure (added that figure to 02/05).
+  Additive: all tables byte-identical to baseline.
+- **Phase 2 (kernel):** `make_wavelet_kernel(cfg)` now builds the WHOLE helper family; each notebook
+  is `list2env(make_wavelet_kernel(cfg), environment())` + config. Output-preserving: re-knit 02/04/
+  05, all tables byte-identical and numeric fingerprints unchanged except intended superset columns.
+- **Deltas from this plan, all confirmed empirically:**
+  - the analytic level needed a **`/wc$Scale`** factor the ticket's formula omitted (WaveletComp
+    rectifies `Wave.xy` by `/Scale`) — calibrated against seeded AR(1) surrogates (`scratch calib*.R`);
+  - the pointwise ν=2 field **speckles** on long daily records, so the contour keeps only coupling
+    **sustained ≥3 cycles** (a duration/area reduction) — user-chosen;
+  - both exhibits shipped (user chose "Both"); time-averaged reference validated (π/4 mean-const,
+    T&C DOF), tight at event periods, mildly conservative at the annual band (documented in-kernel);
+  - 02 prose corrected: Desync's collapse is time-resolved, not visible in a whole-record mean.
+- **Verification layers used:** table byte-diff + numeric fingerprint of plot-input objects
+  (`scratch fingerprint.R`) + per-plot-type visual spot-checks (the fingerprint/table diffs are
+  blind to plot-only styling — season shading, axis units, lag label, wrap-break, subtitle/ylab
+  codepoints — so those were checked by eye and by byte-comparing the exact strings).
 
 ## Headline: invert the ticket's order (deliberate deviation)
 
