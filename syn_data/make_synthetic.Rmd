@@ -170,7 +170,7 @@ overlay_long <- function(df)
 
 plot_series <- function(df, title, xlim = NULL, vlines = numeric()) {
   ggplot(overlay_long(df), aes(time, value, colour = var)) +
-    { if (length(vlines)) geom_vline(xintercept = vlines, linetype = 2, colour = "grey45") } +
+    { if (length(vlines)) geom_vline(xintercept = vlines, linetype = 2, colour = "grey80") } +
     geom_line(linewidth = 0.3) +
     scale_colour_manual(values = series_col) +
     coord_cartesian(xlim = xlim) +
@@ -187,7 +187,7 @@ plot_full <- function(df, phases, title, vlines = numeric()) {
               alpha = 0.40, inherit.aes = FALSE) +
     geom_text(data = phases, aes(x = (xmin + xmax) / 2, y = top, label = label),
               inherit.aes = FALSE, size = 3, vjust = 1, colour = "grey25") +
-    { if (length(vlines)) geom_vline(xintercept = vlines, linetype = 2, colour = "grey30") } +
+    { if (length(vlines)) geom_vline(xintercept = vlines, linetype = 2, colour = "grey80") } +
     geom_line(data = lo, aes(time, value, colour = var), linewidth = 0.3) +
     scale_fill_manual(values = phase_fill, guide = "none") +
     scale_colour_manual(values = series_col) +
@@ -203,7 +203,7 @@ plot_real <- function(df, phases, title, vlines = numeric()) {
               alpha = 0.40, inherit.aes = FALSE) +
     geom_text(data = phases, aes(x = (xmin + xmax) / 2, y = top, label = label),
               inherit.aes = FALSE, size = 3, vjust = 1, colour = "grey25") +
-    { if (length(vlines)) geom_vline(xintercept = vlines, linetype = 2, colour = "grey30") } +
+    { if (length(vlines)) geom_vline(xintercept = vlines, linetype = 2, colour = "grey80") } +
     geom_line(data = df, aes(time, response), colour = series_col[["response"]], linewidth = 0.3) +
     scale_fill_manual(values = phase_fill, guide = "none") +
     coord_cartesian(ylim = c(0, top)) +
@@ -214,7 +214,7 @@ plot_addnoise <- function(df, title, vlines = numeric()) {
   ggplot(pivot_longer(df, c(add_climate, add_response), names_to = "var") %>%
            mutate(var = sub("add_", "", var)),
          aes(time, value, colour = var)) +
-    { if (length(vlines)) geom_vline(xintercept = vlines, linetype = 2, colour = "grey45") } +
+    { if (length(vlines)) geom_vline(xintercept = vlines, linetype = 2, colour = "grey80") } +
     geom_line(linewidth = 0.2) +
     scale_colour_manual(values = series_col) +
     labs(title = title, x = "time", y = "additional disturbance noise (log space)", colour = NULL)
@@ -244,21 +244,21 @@ tf$response <- R0 * exp(tf$beta * tf$x)          # real units
 tf$logresp  <- log(R0) + tf$beta * tf$x          # log space (straight, slope β)
 tf_col <- setNames(c("#6a51a3", "#fd8d3c"), c(lab_n, lab_p))
 
-base_layers <- list(geom_vline(xintercept = 0, linetype = 3, colour = "grey55"),
+base_layers <- list(geom_vline(xintercept = 0, linetype = 3, colour = "grey70"),
                     scale_colour_manual(values = tf_col))
 
 pA <- ggplot(tf, aes(x, response, colour = regime)) +
-  geom_hline(yintercept = R0, linetype = 3, colour = "grey55") + base_layers +
+  geom_hline(yintercept = R0, linetype = 3, colour = "grey70") + base_layers +
   geom_line(linewidth = 0.9) +
-  annotate("point", x = 0, y = R0, colour = "grey25", size = 1.8) +
+  annotate("point", x = 0, y = R0, colour = "grey75", size = 1.8) +
   annotate("text", x = -1.78, y = R0, label = "baseline R0", hjust = 0, vjust = -0.6,
-           size = 3, colour = "grey30") +
+           size = 3, colour = "grey80") +
   labs(title = "Real units:  response = R0 · exp(beta · climate_lag)",
        subtitle = "convex & strictly positive — negative driver → soft floor, positive → amplified",
        x = "climate anomaly at t - lag", y = "response", colour = NULL)
 
 pB <- ggplot(tf, aes(x, logresp, colour = regime)) +
-  geom_hline(yintercept = log(R0), linetype = 3, colour = "grey55") + base_layers +
+  geom_hline(yintercept = log(R0), linetype = 3, colour = "grey70") + base_layers +
   geom_line(linewidth = 0.9) +
   labs(title = "Log space:  log(response) = beta · climate_lag  (straight, slope = beta)",
        subtitle = "the 'log-linear' relationship the response is built on; slope halves n -> n+1",

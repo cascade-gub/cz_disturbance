@@ -210,7 +210,7 @@ phase_band_layers <- function(d) {
   bands <- phase_bands(d); td <- d$time[d$phase == "disturbance"]
   list(geom_rect(data = bands, aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf, fill = phase),
                  alpha = 0.30, inherit.aes = FALSE),
-       geom_vline(xintercept = td, linetype = 2, colour = "grey30"),
+       geom_vline(xintercept = td, linetype = 2, colour = "grey80"),
        scale_fill_manual(values = phase_fill, guide = "none"))
 }
 
@@ -222,7 +222,7 @@ plot_resid <- function(df, title) {
   sc   <- ytop / max(abs(rt$dresid), na.rm = TRUE)                     # scale d/dt onto the residual axis (2nd axis un-scales it)
   ggplot() +
     phase_band_layers(df) +
-    geom_hline(yintercept = 0, colour = "grey60", linewidth = 0.3) +
+    geom_hline(yintercept = 0, colour = "grey70", linewidth = 0.3) +
     geom_line(data = rt, aes(time, dresid * sc), colour = "#d94801", linewidth = 0.3, na.rm = TRUE) +
     geom_line(data = rt, aes(time, resid),       colour = "#238b45", linewidth = 0.4, na.rm = TRUE) +
     geom_text(data = mutate(bands, x = (xmin + xmax) / 2),
@@ -266,7 +266,7 @@ plot_wave_bars <- function(sm, title) {
   dat <- metrics_long(sm, "phase")
   ggplot(dat, aes(phase, value, fill = phase)) +
     geom_col(width = 0.7) +
-    geom_errorbar(aes(ymin = value - se, ymax = value + se), width = 0.25, colour = "grey25", na.rm = TRUE) +
+    geom_errorbar(aes(ymin = value - se, ymax = value + se), width = 0.25, colour = "grey80", na.rm = TRUE) +
     facet_wrap(~ metric, scales = "free_y", nrow = 1, labeller = as_labeller(metric_labs)) +
     scale_fill_manual(values = bar_fill, guide = "none") +
     labs(title = title, x = NULL, y = NULL)
@@ -419,8 +419,8 @@ cat(kable(delta %>% transmute(dataset, metric = metric_labs[as.character(metric)
 ```{r summary-fig, fig.height=4, fig.cap=fig_n("Post − pre change per scenario, faceted by band metric with free y axes (so scenarios compare within each metric, not across metrics), ±1 propagated SE. Shift = amp-ratio & lag drop (coupled regime shift); Desync = cross-power & amp-ratio collapse (decoupling, invisible to coherence); Return = all Δ ≈ 0.")}
 ggplot(delta, aes(dataset, delta, fill = dataset)) +
   geom_col() +
-  geom_errorbar(aes(ymin = delta - delta_se, ymax = delta + delta_se), width = 0.25, colour = "grey25", na.rm = TRUE) +
-  geom_hline(yintercept = 0, colour = "grey50") +
+  geom_errorbar(aes(ymin = delta - delta_se, ymax = delta + delta_se), width = 0.25, colour = "grey80", na.rm = TRUE) +
+  geom_hline(yintercept = 0, colour = "grey70") +
   facet_wrap(~ metric, scales = "free_y", labeller = as_labeller(metric_labs)) +
   scale_fill_brewer(palette = "Set2", guide = "none") +
   labs(title = "Post − pre change by band metric (free y axes; ±1 SE)", x = NULL, y = "post − pre") +
