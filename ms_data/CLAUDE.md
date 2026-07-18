@@ -110,8 +110,9 @@ throughout.
 - **No `transition` phase.** Real phases are `pre / disturbance / post`. The wavelet's settled
   windows are buffered `EF ≈ 516 d` from **both** the series ends and the disturbance, so ~1.4 yr
   of immediate post-disturbance recovery is excluded from the settled `post` average.
-- **`loess.span = 0` is fine.** The analyzed wavelet band (~129–1032 d) sits *below* any decadal
-  trend, so no detrending is needed and the `×sd` amplitude rescale stays exact.
+- **`loess.span = 0` is fine.** The analyzed wavelet range (4–730 d — wide enough to show the
+  week/month/year guide lines) sits *below* any decadal trend, so no detrending is needed and the
+  `×sd` amplitude rescale stays exact.
 - **Peak method frays on the driver.** Smoothed daily precip gives an unstable "period" (fernow
   is bimodal ~280 d; `MC06` degenerates to a single peak → `period_climate = NA`). Discharge, by
   contrast, shows a clean ~annual peak (356–370 d). This split is a core finding of III.

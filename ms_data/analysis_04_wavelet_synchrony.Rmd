@@ -85,7 +85,7 @@ resolved here.
 
 **Provenance & framing.** Discharge is fully observed; **precip is partly modelled infill**
 (negligible at hbef/fernow, ~13% at hjandrews, **~88% at `MC06`** — a modelled driver). And a
-long-term trend sits *above* the analyzed band (upper period `≈1032 d`), so `loess.span = 0` (no
+long-term trend sits *above* the analyzed range (upper period `730 d`), so `loess.span = 0` (no
 detrending) is retained without trend-contaminating the seasonal read. Real precip is episodic,
 not a clean sine, so — as analysis III already hinted — expect coherence to saturate and the
 *power* channels to carry whatever real story there is.
@@ -99,24 +99,33 @@ CMEAN     <- function(a) Arg(mean(exp(1i * a)))          # circular mean of angl
 band_rows <- function(wc) which(abs(wc$Period - P) <= 0.05 * P)  # the few scale-rows within ±5% of P
 
 # wc.image styling is identical across all five site spectra — only the object + title vary.
+# Horizontal dashed guides at a week / month / year. The period axis is log2, so a period p sits
+# at y = log2(p); graphics.reset = FALSE keeps wc.image's coordinate system live to annotate over.
+wc_marks <- c("1 wk" = 7, "1 mo" = 30, "1 yr" = 365)
 plot_wc <- function(wc, main) {
   op <- par(bg = "white", fg = "black", col.axis = "black", col.lab = "black", col.main = "black")
   on.exit(par(op))
   wc.image(wc, which.image = "wc", plot.arrow = TRUE, plot.contour = FALSE,
            color.key = "interval", timelab = "time (days)", periodlab = "period (days)",
-           legend.params = list(lab = "wavelet coherence"), main = main)
+           legend.params = list(lab = "wavelet coherence"), main = main, graphics.reset = FALSE)
+  abline(h = log2(wc_marks), lty = 2, col = "black", lwd = 1.4)                 # week / month / year guides
+  usr <- par("usr")
+  text(x = usr[1] + 0.01 * (usr[2] - usr[1]), y = log2(wc_marks), labels = names(wc_marks),
+       adj = c(0, -0.4), font = 2, cex = 0.9, col = "black")
 }
 
 # ---- WaveletComp wrapper --------------------------------------------------------------------
 # Analyzed on climate (precip) vs log(response) (log discharge).
-# loess.span = 0: no detrending — the analyzed band (≈129–1032 d) sits below any decadal trend,
+# loess.span = 0: no detrending — the analyzed range (4–730 d) sits below any decadal trend,
 #   and standardization is then exactly /sd(x), making the ×sd amplitude rescale in band_trace exact.
 # my.pair ⇒ Angle = phase.climate − phase.log_response, so climate-leads is +.
-# lower/upperPeriod bracket the annual P by ±1.5 octaves so the seasonal ridge sits mid-axis.
+# period range spans ~a week → two years so the week / month / year guide lines are all in view
+# (see plot_wc). Widening the range leaves the band metrics at P unchanged — band_trace/wave_summary
+# read the same ±5%-of-365 scale rows, which sit comfortably inside 4…730 d.
 wco <- function(df)
   analyze.coherency(as.data.frame(df[, c("climate", "log_response")]),
                     my.pair = c("climate", "log_response"), loess.span = 0,
-                    dt = 1, dj = 1/20, lowerPeriod = P / 2^1.5, upperPeriod = P * 2^1.5,
+                    dt = 1, dj = 1/20, lowerPeriod = 4, upperPeriod = 730,
                     make.pval = FALSE, verbose = FALSE)
 
 # ---- collapse the wc object to one time-resolved series at the P band ------------------------
