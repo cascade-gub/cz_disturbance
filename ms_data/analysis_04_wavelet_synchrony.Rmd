@@ -23,6 +23,8 @@ output:
     fig_width: 10
     fig_caption: true
     self_contained: true
+    includes:
+      before_body: ../navbar.html
 ---
 
 ```{r setup, include=FALSE}

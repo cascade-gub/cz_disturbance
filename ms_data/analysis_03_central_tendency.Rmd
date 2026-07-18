@@ -281,8 +281,8 @@ cat(kable(SYNC[["hbef_w1"]] %>% select(-ends_with("_se")), digits = 2,
 ```
 
 ```{r hbef-bars, fig.height=8, fig.cap=fig_n("hbef_w1 — per-channel moments + joint covariance (top) and peak-derived synchrony metrics (bottom), pre vs post. Error bars = ±1 SE where defined.")}
-(plot_moments(STATS[["hbef_w1"]], D[["hbef_w1"]], "hbef_w1 — moments by channel, pre vs post", errbar = TRUE) /
- plot_sync(SYNC[["hbef_w1"]], "hbef_w1 — synchrony metrics, pre vs post")) +
+(plot_moments(STATS[["hbef_w1"]], D[["hbef_w1"]], paste(label["hbef_w1"], "— moments by channel, pre vs post"), errbar = TRUE) /
+ plot_sync(SYNC[["hbef_w1"]], paste(label["hbef_w1"], "— synchrony metrics, pre vs post"))) +
   plot_layout(heights = c(2, 1))
 ```
 
@@ -307,8 +307,8 @@ cat(kable(SYNC[["hjandrews_GSWS10"]] %>% select(-ends_with("_se")), digits = 2,
 ```
 
 ```{r hja-bars, fig.height=8, fig.cap=fig_n("hjandrews_GSWS10 — moments + covariance (top) and synchrony metrics (bottom), pre vs post; ±1 SE where defined.")}
-(plot_moments(STATS[["hjandrews_GSWS10"]], D[["hjandrews_GSWS10"]], "hjandrews_GSWS10 — moments by channel, pre vs post", errbar = TRUE) /
- plot_sync(SYNC[["hjandrews_GSWS10"]], "hjandrews_GSWS10 — synchrony metrics, pre vs post")) +
+(plot_moments(STATS[["hjandrews_GSWS10"]], D[["hjandrews_GSWS10"]], paste(label["hjandrews_GSWS10"], "— moments by channel, pre vs post"), errbar = TRUE) /
+ plot_sync(SYNC[["hjandrews_GSWS10"]], paste(label["hjandrews_GSWS10"], "— synchrony metrics, pre vs post"))) +
   plot_layout(heights = c(2, 1))
 ```
 
@@ -333,8 +333,8 @@ cat(kable(SYNC[["fernow_WS-3"]] %>% select(-ends_with("_se")), digits = 2,
 ```
 
 ```{r fw3-bars, fig.height=8, fig.cap=fig_n("fernow_WS-3 — moments + covariance (top) and synchrony metrics (bottom), pre vs post; ±1 SE where defined.")}
-(plot_moments(STATS[["fernow_WS-3"]], D[["fernow_WS-3"]], "fernow_WS-3 — moments by channel, pre vs post", errbar = TRUE) /
- plot_sync(SYNC[["fernow_WS-3"]], "fernow_WS-3 — synchrony metrics, pre vs post")) +
+(plot_moments(STATS[["fernow_WS-3"]], D[["fernow_WS-3"]], paste(label["fernow_WS-3"], "— moments by channel, pre vs post"), errbar = TRUE) /
+ plot_sync(SYNC[["fernow_WS-3"]], paste(label["fernow_WS-3"], "— synchrony metrics, pre vs post"))) +
   plot_layout(heights = c(2, 1))
 ```
 
@@ -358,8 +358,8 @@ cat(kable(SYNC[["fernow_WS-5"]] %>% select(-ends_with("_se")), digits = 2,
 ```
 
 ```{r fw5-bars, fig.height=8, fig.cap=fig_n("fernow_WS-5 — moments + covariance (top) and synchrony metrics (bottom), pre vs post; ±1 SE where defined.")}
-(plot_moments(STATS[["fernow_WS-5"]], D[["fernow_WS-5"]], "fernow_WS-5 — moments by channel, pre vs post", errbar = TRUE) /
- plot_sync(SYNC[["fernow_WS-5"]], "fernow_WS-5 — synchrony metrics, pre vs post")) +
+(plot_moments(STATS[["fernow_WS-5"]], D[["fernow_WS-5"]], paste(label["fernow_WS-5"], "— moments by channel, pre vs post"), errbar = TRUE) /
+ plot_sync(SYNC[["fernow_WS-5"]], paste(label["fernow_WS-5"], "— synchrony metrics, pre vs post"))) +
   plot_layout(heights = c(2, 1))
 ```
 
@@ -386,8 +386,8 @@ cat(kable(SYNC[["santa_barbara_MC06"]] %>% select(-ends_with("_se")), digits = 2
 ```
 
 ```{r mc06-bars, fig.height=8, fig.cap=fig_n("santa_barbara_MC06 — moments + covariance (top) and synchrony metrics (bottom), pre vs post; ±1 SE where defined.")}
-(plot_moments(STATS[["santa_barbara_MC06"]], D[["santa_barbara_MC06"]], "santa_barbara_MC06 — moments by channel, pre vs post", errbar = TRUE) /
- plot_sync(SYNC[["santa_barbara_MC06"]], "santa_barbara_MC06 — synchrony metrics, pre vs post")) +
+(plot_moments(STATS[["santa_barbara_MC06"]], D[["santa_barbara_MC06"]], paste(label["santa_barbara_MC06"], "— moments by channel, pre vs post"), errbar = TRUE) /
+ plot_sync(SYNC[["santa_barbara_MC06"]], paste(label["santa_barbara_MC06"], "— synchrony metrics, pre vs post"))) +
   plot_layout(heights = c(2, 1))
 ```
 

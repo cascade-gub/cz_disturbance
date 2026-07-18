@@ -22,6 +22,8 @@ output:
     highlight: breezedark
     fig_width: 10
     self_contained: true
+    includes:
+      before_body: ../navbar.html
 ---
 
 ```{r setup, include=FALSE}
