@@ -11,7 +11,7 @@
 
 <meta name="author" content="nic (nic@cascadeclimate.org)" />
 
-<meta name="date" content="2026-07-17" />
+<meta name="date" content="2026-07-18" />
 
 <title>Disturbance–response analysis II — wavelet synchrony (coherence, cross-power, phase → apparent lag, amplitude)</title>
 
@@ -1657,6 +1657,55 @@ border-radius: 0px;
 
 
 
+<!--
+  Shared cross-document navbar. Pulled into every report via the html_document YAML:
+      includes:
+        before_body: ../navbar.html
+  Self-contained-safe (inline CSS/JS only). Links are bare filenames that resolve on the
+  published docs/ site, where every report is a sibling. Current page is highlighted by JS
+  (matches the file basename against each link's data-doc). Single source of truth — edit here.
+-->
+<nav id="xdoc-nav" aria-label="Reports">
+  <a class="xdoc-home" href="index.html" title="All reports (landing page)">▸ synchrony</a>
+  <span class="xdoc-leg">idealised</span>
+  <a href="make_synthetic.html" data-doc="make_synthetic" title="Synthetic data generator">gen</a>
+  <a href="analysis_01_central_tendency.html" data-doc="analysis_01_central_tendency" title="Analysis I — central tendency &amp; peak synchrony">I · central</a>
+  <a href="analysis_02_wavelet_synchrony.html" data-doc="analysis_02_wavelet_synchrony" title="Analysis II — wavelet synchrony">II · wavelet</a>
+  <span class="xdoc-leg">real data</span>
+  <a href="prep_ms_series.html" data-doc="prep_ms_series" title="Real-data prep">prep</a>
+  <a href="eda_timeseries.html" data-doc="eda_timeseries" title="Real-data EDA — disturbance-site time series">EDA</a>
+  <a href="analysis_03_central_tendency.html" data-doc="analysis_03_central_tendency" title="Analysis III — central tendency &amp; peak synchrony (real)">III · central</a>
+  <a href="analysis_04_wavelet_synchrony.html" data-doc="analysis_04_wavelet_synchrony" title="Analysis IV — wavelet synchrony (real)">IV · wavelet</a>
+</nav>
+<style>
+#xdoc-nav {
+position: fixed; top: 0; left: 0; right: 0; z-index: 1030;
+display: flex; flex-wrap: wrap; align-items: baseline; gap: .12rem .5rem;
+padding: .4rem .9rem; background: #1b1b1b; border-bottom: 1px solid #444;
+font: 13px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+box-shadow: 0 1px 6px rgba(0,0,0,.5);
+}
+#xdoc-nav a { color: #00bc8c; text-decoration: none; font-weight: 600;
+padding: .1rem .35rem; border-radius: 4px; white-space: nowrap; }
+#xdoc-nav a:hover { color: #00d9a6; background: #2b2b2b; }
+#xdoc-nav a.active { color: #fff; background: rgba(0,188,140,.20); }
+#xdoc-nav .xdoc-home { color: #e6e6e6; font-weight: 700; margin-right: .3rem; }
+#xdoc-nav .xdoc-leg { color: #7d8288; font-size: 11px; text-transform: uppercase;
+letter-spacing: .04em; font-weight: 600; margin-left: .45rem; }
+
+body { padding-top: 3rem !important; }
+.tocify { top: 3.8rem !important; }
+@media print { #xdoc-nav { display: none; } body { padding-top: 0 !important; } }
+</style>
+<script>
+  (function () {
+    var base = (location.pathname.split("/").pop() || "").replace(/\.html$/, "");
+    var links = document.querySelectorAll("#xdoc-nav a[data-doc]");
+    for (var i = 0; i < links.length; i++) {
+      if (links[i].getAttribute("data-doc") === base) links[i].classList.add("active");
+    }
+  })();
+</script>
 
 <div id="header">
 
@@ -1676,7 +1725,7 @@ synchrony (coherence, cross-power, phase → apparent lag, amplitude)</h1>
 the P≈500 band, pre vs post — the native wavelet view, read against
 analysis I’s moments + peaks</h3>
 <h4 class="author">nic (<a href="mailto:nic@cascadeclimate.org" class="email">nic@cascadeclimate.org</a>)</h4>
-<h4 class="date">2026-07-17</h4>
+<h4 class="date">2026-07-18</h4>
 
 </div>
 

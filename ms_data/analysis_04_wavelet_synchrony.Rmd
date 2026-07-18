@@ -335,7 +335,7 @@ plot_wc(WC[["hbef_w1"]], paste(label["hbef_w1"], "— wavelet coherence"))
 ```
 
 ```{r hbef-trace, fig.height=5.2, fig.cap=fig_n("hbef_w1 — band (P≈365) metrics through time; COI edges blanked, phases shaded.")}
-plot_band_trace(TR[["hbef_w1"]], "hbef_w1 — synchrony at the P≈365 band, through time")
+plot_band_trace(TR[["hbef_w1"]], paste(label["hbef_w1"], "— synchrony at the P≈365 band, through time"))
 ```
 
 ```{r hbef-table, results='asis'}
@@ -343,7 +343,7 @@ emit_table(SM[["hbef_w1"]], "hbef_w1 — band synchrony, settled pre vs post (n_
 ```
 
 ```{r hbef-bars, fig.height=3, fig.cap=fig_n("hbef_w1 — pre vs post band metrics, ±1 SE (block SE).")}
-plot_wave_bars(SM[["hbef_w1"]], "hbef_w1 — band metrics, pre vs post (±1 SE)")
+plot_wave_bars(SM[["hbef_w1"]], paste(label["hbef_w1"], "— band metrics, pre vs post (±1 SE)"))
 ```
 
 ---
@@ -358,11 +358,11 @@ plot_resid(D[["hjandrews_GSWS10"]], paste(label["hjandrews_GSWS10"], "— model 
 ```
 
 ```{r hja-wc, fig.height=4.6, fig.cap=fig_n("hjandrews_GSWS10 — wavelet coherence spectrum.")}
-plot_wc(WC[["hjandrews_GSWS10"]], "hjandrews_GSWS10 — wavelet coherence")
+plot_wc(WC[["hjandrews_GSWS10"]], paste(label["hjandrews_GSWS10"], "— wavelet coherence"))
 ```
 
 ```{r hja-trace, fig.height=5.2, fig.cap=fig_n("hjandrews_GSWS10 — band metrics through time.")}
-plot_band_trace(TR[["hjandrews_GSWS10"]], "hjandrews_GSWS10 — synchrony at the P≈365 band, through time")
+plot_band_trace(TR[["hjandrews_GSWS10"]], paste(label["hjandrews_GSWS10"], "— synchrony at the P≈365 band, through time"))
 ```
 
 ```{r hja-table, results='asis'}
@@ -370,7 +370,7 @@ emit_table(SM[["hjandrews_GSWS10"]], "hjandrews_GSWS10 — band synchrony, settl
 ```
 
 ```{r hja-bars, fig.height=3, fig.cap=fig_n("hjandrews_GSWS10 — pre vs post band metrics, ±1 SE.")}
-plot_wave_bars(SM[["hjandrews_GSWS10"]], "hjandrews_GSWS10 — band metrics, pre vs post (±1 SE)")
+plot_wave_bars(SM[["hjandrews_GSWS10"]], paste(label["hjandrews_GSWS10"], "— band metrics, pre vs post (±1 SE)"))
 ```
 
 ---
@@ -386,11 +386,11 @@ plot_resid(D[["fernow_WS-3"]], paste(label["fernow_WS-3"], "— model residual &
 ```
 
 ```{r fw3-wc, fig.height=4.6, fig.cap=fig_n("fernow_WS-3 — wavelet coherence spectrum.")}
-plot_wc(WC[["fernow_WS-3"]], "fernow_WS-3 — wavelet coherence")
+plot_wc(WC[["fernow_WS-3"]], paste(label["fernow_WS-3"], "— wavelet coherence"))
 ```
 
 ```{r fw3-trace, fig.height=5.2, fig.cap=fig_n("fernow_WS-3 — band metrics through time.")}
-plot_band_trace(TR[["fernow_WS-3"]], "fernow_WS-3 — synchrony at the P≈365 band, through time")
+plot_band_trace(TR[["fernow_WS-3"]], paste(label["fernow_WS-3"], "— synchrony at the P≈365 band, through time"))
 ```
 
 ```{r fw3-table, results='asis'}
@@ -398,7 +398,7 @@ emit_table(SM[["fernow_WS-3"]], "fernow_WS-3 — band synchrony, settled pre vs 
 ```
 
 ```{r fw3-bars, fig.height=3, fig.cap=fig_n("fernow_WS-3 — pre vs post band metrics, ±1 SE.")}
-plot_wave_bars(SM[["fernow_WS-3"]], "fernow_WS-3 — band metrics, pre vs post (±1 SE)")
+plot_wave_bars(SM[["fernow_WS-3"]], paste(label["fernow_WS-3"], "— band metrics, pre vs post (±1 SE)"))
 ```
 
 ---
@@ -414,11 +414,11 @@ plot_resid(D[["fernow_WS-5"]], paste(label["fernow_WS-5"], "— model residual &
 ```
 
 ```{r fw5-wc, fig.height=4.6, fig.cap=fig_n("fernow_WS-5 — wavelet coherence spectrum.")}
-plot_wc(WC[["fernow_WS-5"]], "fernow_WS-5 — wavelet coherence")
+plot_wc(WC[["fernow_WS-5"]], paste(label["fernow_WS-5"], "— wavelet coherence"))
 ```
 
 ```{r fw5-trace, fig.height=5.2, fig.cap=fig_n("fernow_WS-5 — band metrics through time.")}
-plot_band_trace(TR[["fernow_WS-5"]], "fernow_WS-5 — synchrony at the P≈365 band, through time")
+plot_band_trace(TR[["fernow_WS-5"]], paste(label["fernow_WS-5"], "— synchrony at the P≈365 band, through time"))
 ```
 
 ```{r fw5-table, results='asis'}
@@ -426,7 +426,7 @@ emit_table(SM[["fernow_WS-5"]], "fernow_WS-5 — band synchrony, settled pre vs 
 ```
 
 ```{r fw5-bars, fig.height=3, fig.cap=fig_n("fernow_WS-5 — pre vs post band metrics, ±1 SE.")}
-plot_wave_bars(SM[["fernow_WS-5"]], "fernow_WS-5 — band metrics, pre vs post (±1 SE)")
+plot_wave_bars(SM[["fernow_WS-5"]], paste(label["fernow_WS-5"], "— band metrics, pre vs post (±1 SE)"))
 ```
 
 ---
@@ -443,11 +443,11 @@ plot_resid(D[["santa_barbara_MC06"]], paste(label["santa_barbara_MC06"], "— mo
 ```
 
 ```{r mc06-wc, fig.height=4.6, fig.cap=fig_n("santa_barbara_MC06 — wavelet coherence spectrum. Read against the ~88% modelled precip driver.")}
-plot_wc(WC[["santa_barbara_MC06"]], "santa_barbara_MC06 — wavelet coherence")
+plot_wc(WC[["santa_barbara_MC06"]], paste(label["santa_barbara_MC06"], "— wavelet coherence"))
 ```
 
 ```{r mc06-trace, fig.height=5.2, fig.cap=fig_n("santa_barbara_MC06 — band metrics through time.")}
-plot_band_trace(TR[["santa_barbara_MC06"]], "santa_barbara_MC06 — synchrony at the P≈365 band, through time")
+plot_band_trace(TR[["santa_barbara_MC06"]], paste(label["santa_barbara_MC06"], "— synchrony at the P≈365 band, through time"))
 ```
 
 ```{r mc06-table, results='asis'}
@@ -455,7 +455,7 @@ emit_table(SM[["santa_barbara_MC06"]], "santa_barbara_MC06 — band synchrony, s
 ```
 
 ```{r mc06-bars, fig.height=3, fig.cap=fig_n("santa_barbara_MC06 — pre vs post band metrics, ±1 SE.")}
-plot_wave_bars(SM[["santa_barbara_MC06"]], "santa_barbara_MC06 — band metrics, pre vs post (±1 SE)")
+plot_wave_bars(SM[["santa_barbara_MC06"]], paste(label["santa_barbara_MC06"], "— band metrics, pre vs post (±1 SE)"))
 ```
 
 ---
