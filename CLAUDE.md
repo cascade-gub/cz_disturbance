@@ -42,8 +42,12 @@ bench** for the methods, not a defect — how each method responds is the findin
 From repo root: `"/c/Program Files/R/R-4.6.1/bin/Rscript.exe" build_docs.R` renders every
 notebook and copies the self-contained HTML into `docs/` for GitHub Pages
 (`docs/index.html` is the landing page). Knitting an `.Rmd` via the RStudio **Knit** button
-does the same copy via its `knit:` YAML field. `build_docs.R` covers only the tracked
-`syn_data` leg; `ms_data/` and `plots/` are git-ignored local notebooks, re-knitted by hand.
+does the same copy via its `knit:` YAML field. `build_docs.R` renders **both legs** — `syn_data`
+(I/II) and `ms_data` (III/IV) — plus `plots/eda_timeseries.Rmd`. The `ms_data` notebooks and their
+`*__series_daily.csv` are **tracked** and published; only the raw `ms_data/v2/` pull and `plots/`
+stay git-ignored. `prep_ms_series` and the EDA need the local pull (`data/`) to *re-render*, so
+`build_docs.R` **skips (does not fail on)** any notebook whose local inputs are absent — the
+tracked III/IV still build from the committed CSVs.
 
 ## Report styling — **standard: dark page + white-matted figures**
 

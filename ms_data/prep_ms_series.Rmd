@@ -1,0 +1,191 @@
+---
+title: "Real-data prep — MacroSheds precip→discharge series with disturbance phases"
+subtitle: "Builds the tracked wide per-site CSVs (climate = precip, response = discharge, phase) that analyses 03 & 04 read"
+author: "nic (nic@cascadeclimate.org)"
+date: "`r Sys.Date()`"
+# Knit → render in place, then copy the self-contained HTML to <repo-root>/docs for GitHub Pages.
+knit: |
+  (function(input, encoding) {
+    out  <- rmarkdown::render(input, encoding = encoding)
+    docs <- file.path(dirname(normalizePath(input)), "..", "docs")
+    dir.create(docs, showWarnings = FALSE, recursive = TRUE)
+    file.copy(out, docs, overwrite = TRUE)
+    out
+  })
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    code_folding: hide
+    theme: darkly
+    highlight: breezedark
+    fig_width: 10
+    fig_caption: true
+    self_contained: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      dev.args = list(bg = "white"))
+suppressMessages({ library(dplyr); library(tidyr); library(readr); library(ggplot2)
+                   library(knitr); library(patchwork) })
+theme_set(theme_bw(base_size = 11) + theme(legend.position = "bottom"))
+fig_n <- local({ i <- 0L; function(x) { i <<- i + 1L; paste0("Figure ", i, ". ", x) } })
+OUT_DIR <- "."   # write the wide CSVs beside this notebook (ms_data/), mirroring syn_data's OUT_DIR
+```
+
+```{css figure-matting, echo=FALSE}
+.main-container img, div.figure img {
+  background-color: #ffffff; padding: 10px; border-radius: 6px;
+  box-sizing: border-box; max-width: 100%; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+}
+```
+
+This notebook is the **real-data analog of `syn_data/make_synthetic.Rmd`**: it does not analyze
+anything, it just assembles the tracked datasets that `analysis_03` / `analysis_04` consume. The
+synthetic generator invents a clean lagged log-linear system; here we instead **carve real
+MacroSheds watershed records into the same wide `climate / response / phase` shape**, so the two
+legs of the study feed identical analysis code (the whole point — a clean methods comparison; see
+`CLAUDE.md`).
+
+**Channel mapping** (see `../CLAUDE.md` for the full rationale):
+
+- `climate` = **daily precipitation (mm)** — the exogenous, *undisturbed* driver (the analog of
+  the synthetic sine). Kept in **linear** units: precip is non-negative and spiky, its many
+  zero-rain days are genuine, and no log is taken on the driver.
+- `response` = **daily discharge (L/s)** — the disturbed variable, analyzed in **log space** by
+  03/04 (strictly positive, right-skewed, multiplicative). We floor zero-flow days here so
+  `log(response)` is always finite (below).
+- `phase` = ordered `pre → disturbance → post`, cut from each site's screened disturbance date
+  and window in `../qualifying_disturbances.csv`.
+
+Unlike the synthetic ideal, real precip is **episodic (not a clean annual sine)**, discharge
+carries **trend / storage / snowmelt lag**, and one site's stream is **intermittent** — exactly
+the less-deterministic synchrony 03/04 stress-test the two methods against.
+
+## Inputs & site table
+
+```{r sites}
+# The 5 screened disturbances (one per site) with their pre/post windows.
+qd <- read_csv("../qualifying_disturbances.csv", show_col_types = FALSE) %>%
+  mutate(tag = paste0(domain, "_", site_code))
+kable(qd %>% select(tag, disturbance, class, disturbance_start, disturbance_end,
+                    window_start, window_end),
+      caption = "The 5 qualifying real disturbances (source: ../qualifying_disturbances.csv)")
+```
+
+## Build one wide series per site
+
+For each site we (1) intersect its qualifying window with the dates where **both** precip and
+discharge exist (this trims `santa_barbara_MC06` — precip starts 2000 — and `hjandrews_GSWS10`
+— precip ends 2017), (2) lay both channels on a **continuous daily grid** (both are already
+gap-free inside the window, verified — no interpolation), (3) **floor zero-flow days** to half
+the 1st-percentile of positive discharge (robust to near-zero traces) so `log(response)` is
+finite (flagged in `zero_flow`),
+and (4) label `phase` from the disturbance dates. `time` is an integer day index `1…N` — the
+unit all the ported peak / wavelet math runs in (`dt = 1` day).
+
+```{r build}
+build_site <- function(row) {
+  tag <- row$tag
+  q <- read_csv(sprintf("../data/%s__discharge_daily.csv",    tag), show_col_types = FALSE)
+  p <- read_csv(sprintf("../data/%s__precipitation_daily.csv", tag), show_col_types = FALSE)
+
+  lo <- max(row$window_start, min(q$date), min(p$date))    # common, window-clipped span
+  hi <- min(row$window_end,   max(q$date), max(p$date))
+  grid <- tibble(date = seq(lo, hi, by = "day"))
+
+  # carry MacroSheds' gap-fill flag (ms_interp == 1) for both channels. Discharge is fully
+  # observed at all 5 sites; precipitation is partly modelled-infill at some (hjandrews ~13%,
+  # MC06 ~88%) — surfaced here and flagged per row so the analyses can caveat it.
+  qv <- q %>% filter(date >= lo, date <= hi) %>% transmute(date, discharge = val, q_interp = ms_interp == 1)
+  pv <- p %>% filter(date >= lo, date <= hi) %>% transmute(date, precip    = val, p_interp = ms_interp == 1)
+  d  <- grid %>% left_join(qv, by = "date") %>% left_join(pv, by = "date")
+
+  # log floor = half the 1st-percentile of positive flow. Robust to near-zero trace values (e.g.
+  # hbef has positive readings ~3e-5 L/s); flooring at the raw minimum would put no-flow days at an
+  # absurd log outlier (~ -11) that dominates the variance. The 1st-pct floor keeps them "very low".
+  eps <- 0.5 * as.numeric(quantile(d$discharge[d$discharge > 0], 0.01, na.rm = TRUE))
+  ds <- row$disturbance_start; de <- row$disturbance_end
+  d %>% transmute(
+    time     = row_number(),
+    date,
+    climate  = precip,                                   # linear driver (mm)
+    response = pmax(discharge, eps),                     # floored discharge (L/s), strictly positive
+    zero_flow = discharge <= 0,                          # days that were floored (intermittent flow)
+    climate_interp  = p_interp,                          # precip day is MacroSheds gap-fill (modelled)
+    response_interp = q_interp,                          # discharge day is gap-fill (0% at every site)
+    phase = factor(ifelse(date < ds, "pre",
+                   ifelse(date <= de, "disturbance", "post")),
+                   levels = c("pre", "disturbance", "post")),
+    site  = tag,
+    disturbance = row$disturbance,                       # carried so 03/04 need no external file
+    class = row$class)
+}
+
+series <- lapply(seq_len(nrow(qd)), function(i) build_site(qd[i, ]))
+names(series) <- qd$tag
+```
+
+## Write the tracked CSVs & summary
+
+```{r write}
+paths <- vapply(names(series), function(tag) {
+  f <- file.path(OUT_DIR, paste0(tag, "__series_daily.csv"))
+  # response rounded to 6 dp (not 4): some sites have sub-1e-4 flows that 4 dp would zero out → -Inf in log.
+  write_csv(series[[tag]] %>% mutate(climate = round(climate, 4), response = round(response, 6)), f)
+  f
+}, character(1))
+
+summ <- bind_rows(lapply(series, function(s) tibble(
+  site = s$site[1], class = s$class[1], n_days = nrow(s),
+  start = min(s$date), end = max(s$date),
+  pre_days  = sum(s$phase == "pre"),
+  post_days = sum(s$phase == "post"),
+  zero_flow_days = sum(s$zero_flow),
+  climate_interp_pct  = round(100 * mean(s$climate_interp), 1),   # % of precip days that are modelled infill
+  response_interp_pct = round(100 * mean(s$response_interp), 1),  # % of discharge days infilled (≈0)
+  med_climate = median(s$climate), med_response = median(s$response))))
+kable(summ, digits = 2, caption = "Wide series written to ms_data/ (one row per site)")
+```
+
+**Data-provenance note (`ms_interp`).** Discharge is **fully observed** (0% gap-filled) at every
+site — the `log(response)` channel is real throughout. Precipitation, however, is partly
+**MacroSheds modelled infill**: negligible at `hbef_w1` / `fernow_WS-3` / `fernow_WS-5`, ~13% at
+`hjandrews_GSWS10`, and **~88% at `santa_barbara_MC06`** (its precip driver is almost entirely
+gap-filled — treat any MC06 precip→discharge coupling as coupling to a *modelled* driver, not an
+observed one). Analyses 03/04 repeat this caveat where it matters.
+
+## Sanity panels
+
+Climate (precip, top) and `log(response)` (log discharge, bottom) per site, phases shaded, the
+disturbance drawn as a dashed line. This is the same view `analysis_03` opens each site section
+with — here purely to confirm the join, phase cut, and log-floor look right.
+
+```{r panels, fig.height=13, fig.cap=fig_n("Per-site assembled series: precip (blue) and log(discharge) (purple), pre/post shaded, dashed = disturbance date. Note the episodic precip driver and, at MC06, the intermittent-flow floor in log space.")}
+phase_fill <- c(pre = "#9ecae1", disturbance = "grey45", post = "#fdae6b")
+one_panel <- function(s) {
+  bands <- s %>% filter(phase != "disturbance") %>% group_by(phase) %>%
+    summarise(xmin = min(time), xmax = max(time), .groups = "drop")
+  td <- s$time[s$phase == "disturbance"]
+  long <- s %>% transmute(time, climate, log_response = log(response)) %>%
+    pivot_longer(c(climate, log_response), names_to = "var")
+  ggplot() +
+    geom_rect(data = bands, aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf, fill = phase),
+              alpha = 0.35, inherit.aes = FALSE) +
+    geom_vline(xintercept = td, linetype = 2, colour = "grey60") +
+    geom_line(data = long, aes(time, value, colour = var), linewidth = 0.2) +
+    facet_wrap(~ var, ncol = 1, scales = "free_y") +
+    scale_fill_manual(values = phase_fill, guide = "none") +
+    scale_colour_manual(values = c(climate = "#3182bd", log_response = "#6a51a3"), guide = "none") +
+    labs(title = s$site[1], x = "time (days)", y = NULL)
+}
+wrap_plots(lapply(series, one_panel), ncol = 1)
+```
+
+The five `*__series_daily.csv` files are the **only tracked interface** between this prep and the
+two analyses — exactly as `synthetic_*.csv` are for `syn_data`. Regenerate them by knitting this
+notebook (it reads `../data/` + `../qualifying_disturbances.csv`, which require the local
+MacroSheds pull but are not needed to *run* 03/04).
+```

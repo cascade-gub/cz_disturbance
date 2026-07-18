@@ -1,0 +1,494 @@
+---
+title: "Real-data disturbance–response IV — wavelet synchrony (coherence, cross-power, phase → apparent lag, amplitude)"
+subtitle: "The Morlet-wavelet approach on real MacroSheds precip→discharge — how the native signal-processing view holds up off the idealised bench (cf. analysis II), read against analysis III's peaks"
+author: "nic (nic@cascadeclimate.org)"
+date: "`r Sys.Date()`"
+# Knit → render in place, then copy the self-contained HTML to <repo-root>/docs for GitHub Pages.
+knit: |
+  (function(input, encoding) {
+    out  <- rmarkdown::render(input, encoding = encoding)
+    docs <- file.path(dirname(normalizePath(input)), "..", "docs")
+    dir.create(docs, showWarnings = FALSE, recursive = TRUE)
+    file.copy(out, docs, overwrite = TRUE)
+    out
+  })
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    code_folding: hide
+    theme: darkly
+    highlight: breezedark
+    fig_width: 10
+    fig_caption: true
+    self_contained: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      dev.args = list(bg = "white"))   # native (light) PNG canvas; white matting added via CSS
+if (!requireNamespace("WaveletComp", quietly = TRUE))                  # WaveletComp is required
+  stop("analysis_04 needs WaveletComp — install once with  install.packages('WaveletComp')")
+suppressMessages({ library(dplyr); library(tidyr); library(readr); library(ggplot2)
+                   library(knitr); library(patchwork); library(WaveletComp) })
+# Deterministic — no RNG / significance surrogates, so re-knits reproduce every number exactly.
+theme_set(theme_bw(base_size = 11) + theme(legend.position = "bottom"))
+P  <- 365              # seasonal (annual) period in days — the band we read synchrony at.
+EF <- round(sqrt(2) * P)  # Morlet e-folding (~516 d) = time support at period P. Serves as both the
+                          # COI margin from the series ends and the buffer from the disturbance
+                          # (so a settled-window average never straddles the event).
+fig_n <- local({ i <- 0L; function(x) { i <<- i + 1L; paste0("Figure ", i, ". ", x) } })
+```
+
+```{css figure-matting, echo=FALSE}
+/* White matting behind every figure: native light plots (incl. WaveletComp heatmaps) read cleanly on the darkly page. */
+.main-container img,
+div.figure img {
+  background-color: #ffffff;
+  padding: 10px;
+  border-radius: 6px;
+  box-sizing: border-box;
+  max-width: 100%;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+}
+```
+
+This is **analysis II's method — Morlet wavelet coherence via WaveletComp — run on real
+watersheds**, the wavelet counterpart to analysis III's peak/moments pass on the same five sites.
+The study is a **methods comparison**: analysis II (`syn_data/analysis_02`) established, on a
+clean synthetic system, what the native wavelet view sees that peaks cannot (coupling resolved
+jointly in time *and* frequency; a sharp sub-step lag) — and its **characteristic failure**: the
+*normalized, smoothed* coherence can be **fooled**, staying ≈1 even over noise, so the honest
+signal lives in the **un-normalized cross-power and band amplitude**. Here we test whether those
+strengths and that weakness reproduce on **less-deterministic real synchrony**: `climate` = daily
+precipitation (undisturbed driver), `log(response)` = log daily discharge, read at the **annual
+`P≈365 d` band**.
+
+Four band-localized quantities, all read at `P≈365` (the seasonal band):
+
+- **Wavelet coherence** `∈[0,1]` — normalized (smoothed) coupling strength.
+- **Cross-wavelet power** — strength of *shared* oscillation at the band (un-normalized).
+- **Phase difference φ** (radians) — `Angle = phase.climate − phase.response`; **climate leads ⇒
+  positive φ**. Shown alongside its step-unit form:
+- **Apparent lag** = `φ · P / (2π)` days — φ rescaled to "how many days behind."
+- **Amplitude ratio** — band amplitude `response / climate` (rescaled back to physical units; see
+  the `×sd` note in `band_trace`).
+
+*Two caveats carried throughout.* **(1) COI/edge:** at period `P` the Morlet spans `~±516` days,
+so band metrics are only trustworthy `≥516 d` from a series end *and* from the disturbance —
+settled averages use those buffered windows, trace edges are blanked. **(2) Uncertainty:** the
+band series is heavily autocorrelated, so error bars use a **block SE** — one estimate per `P`-long
+(annual) cycle, `SE = dispersion/√n_blocks` (a *circular* dispersion for phase). Unlike the
+synthetic windows (~2 cycles), the real windows hold **~15–28 years**, so these SEs are far better
+resolved here.
+
+**Provenance & framing.** Discharge is fully observed; **precip is partly modelled infill**
+(negligible at hbef/fernow, ~13% at hjandrews, **~88% at `MC06`** — a modelled driver). And a
+long-term trend sits *above* the analyzed band (upper period `≈1032 d`), so `loess.span = 0` (no
+detrending) is retained without trend-contaminating the seasonal read. Real precip is episodic,
+not a clean sine, so — as analysis III already hinted — expect coherence to saturate and the
+*power* channels to carry whatever real story there is.
+
+## Helpers
+
+```{r helpers}
+# ---- small numerics -------------------------------------------------------------------------
+smooth_ma <- function(x, w = 61) as.numeric(stats::filter(x, rep(1 / w, w)))  # centered MA; NA at ±(w-1)/2 ends
+CMEAN     <- function(a) Arg(mean(exp(1i * a)))          # circular mean of angles (phase never averaged linearly)
+band_rows <- function(wc) which(abs(wc$Period - P) <= 0.05 * P)  # the few scale-rows within ±5% of P
+
+# wc.image styling is identical across all five site spectra — only the object + title vary.
+plot_wc <- function(wc, main) {
+  op <- par(bg = "white", fg = "black", col.axis = "black", col.lab = "black", col.main = "black")
+  on.exit(par(op))
+  wc.image(wc, which.image = "wc", plot.arrow = TRUE, plot.contour = FALSE,
+           color.key = "interval", timelab = "time (days)", periodlab = "period (days)",
+           legend.params = list(lab = "wavelet coherence"), main = main)
+}
+
+# ---- WaveletComp wrapper --------------------------------------------------------------------
+# Analyzed on climate (precip) vs log(response) (log discharge).
+# loess.span = 0: no detrending — the analyzed band (≈129–1032 d) sits below any decadal trend,
+#   and standardization is then exactly /sd(x), making the ×sd amplitude rescale in band_trace exact.
+# my.pair ⇒ Angle = phase.climate − phase.log_response, so climate-leads is +.
+# lower/upperPeriod bracket the annual P by ±1.5 octaves so the seasonal ridge sits mid-axis.
+wco <- function(df)
+  analyze.coherency(as.data.frame(df[, c("climate", "log_response")]),
+                    my.pair = c("climate", "log_response"), loess.span = 0,
+                    dt = 1, dj = 1/20, lowerPeriod = P / 2^1.5, upperPeriod = P * 2^1.5,
+                    make.pval = FALSE, verbose = FALSE)
+
+# ---- collapse the wc object to one time-resolved series at the P band ------------------------
+band_trace <- function(wc, df) {
+  bi   <- band_rows(wc)
+  sd_c <- sd(df$climate); sd_r <- sd(df$log_response)      # the constants WaveletComp divided out (loess.span=0)
+  ang  <- apply(wc$Angle[bi, , drop = FALSE], 2, CMEAN)    # per-time band phase difference
+  tibble(time      = df$time,
+         phase     = df$phase,
+         coherence = colMeans(wc$Coherence[bi, , drop = FALSE]),
+         xpower    = colMeans(wc$Power.xy[bi, , drop = FALSE]),                 # shared-oscillation power at band
+         amp_ratio = colMeans(wc$Ampl.y[bi, , drop = FALSE]) /
+                     colMeans(wc$Ampl.x[bi, , drop = FALSE]) * (sd_r / sd_c),   # ×sd: undo standardization → physical band-amp ratio
+         angle     = ang,
+         lag       = ang / (2 * pi) * P,                                        # phase → days
+         coi_ok    = df$time >= EF & df$time <= nrow(df) - EF)                  # trustworthy (outside COI) mask
+}
+
+# ---- settled pre/post summary with block SEs ------------------------------------------------
+# One estimate per P-long (annual) cycle in a COI-buffered window, then value ± dispersion/√n_blocks.
+block_stat <- function(t, v, circ = FALSE) {
+  b  <- (t - min(t)) %/% P
+  bv <- as.numeric(tapply(seq_along(t), b, function(i) if (circ) CMEAN(v[i]) else mean(v[i])))
+  n  <- length(bv)
+  if (circ) {
+    R    <- Mod(mean(exp(1i * bv)))                       # resultant length of block phases (1 = locked, 0 = scattered)
+    disp <- if (R < 1) sqrt(-2 * log(R)) else 0           # circular sd
+  } else disp <- sd(bv)
+  list(value = if (circ) CMEAN(bv) else mean(bv),
+       se    = if (n > 1) disp / sqrt(n) else NA_real_, n = n)
+}
+
+# Settled windows come from the `phase` column: buffer EF from BOTH the series ends and the
+# disturbance. Real phases are pre / disturbance / post (no synthetic "transition"); the
+# disturbance may be a single day or a short span (fernow_WS-5), so we buffer from its full extent.
+wave_summary <- function(tr) {
+  ds <- min(tr$time[tr$phase == "disturbance"])          # first disturbance step
+  de <- max(tr$time[tr$phase == "disturbance"])          # last disturbance step (span for WS-5)
+  N  <- max(tr$time)
+  wins <- list(pre  = tr$time >= EF      & tr$time <= ds - EF,     # ≥ EF from series start AND from disturbance onset
+               post = tr$time >= de + EF & tr$time <= N  - EF)     # ≥ EF from disturbance end AND from series end
+  one <- function(sel) {
+    t  <- tr$time[sel]
+    co <- block_stat(t, tr$coherence[sel]); xp <- block_stat(t, tr$xpower[sel])
+    ar <- block_stat(t, tr$amp_ratio[sel]); an <- block_stat(t, tr$angle[sel], circ = TRUE)
+    tibble(n_blocks  = co$n,                                            # cycles the SEs rest on
+           coherence = co$value, coherence_se = co$se,
+           xpower    = xp$value, xpower_se    = xp$se,
+           amp_ratio = ar$value, amp_ratio_se = ar$se,
+           phi       = an$value,                 phi_se = an$se,          # phase difference φ, radians (circular SE)
+           lag       = an$value / (2*pi) * P, lag_se = an$se / (2*pi) * P)  # same φ in day units
+  }
+  bind_rows(pre = one(wins$pre), post = one(wins$post), .id = "phase") %>%
+    mutate(phase = factor(phase, c("pre", "post")))
+}
+
+# ---- model-based residual (whole series, log space) -----------------------------------------
+# Predict log(response) from a pre-fit predictor: predicted = gain · climate(t − lag). lag & gain
+# are fit on `pre` only (cross-correlation peak + no-intercept OLS), so the residual sits at ~0
+# through pre and departs where coupling changes.
+fit_pre <- function(df) {
+  pre <- df[df$phase == "pre", ]; cl <- pre$climate; rs <- pre$log_response; n <- length(rs)
+  Ls  <- 0:round(0.6 * P)                                              # physically plausible lags only (< ~0.6 season)
+  cr  <- vapply(Ls, function(L) cor(rs[(L + 1):n], cl[seq_len(n - L)]), numeric(1))  # cor(log(response)(t), climate(t−L))
+  L   <- Ls[which.max(cr)]
+  x   <- cl[seq_len(n - L)]; y <- rs[(L + 1):n]
+  list(lag = L, gain = sum(x * y) / sum(x * x))                        # OLS slope, no intercept
+}
+
+resid_trace <- function(df) {
+  fp <- fit_pre(df); L <- fp$lag; N <- nrow(df)
+  pred <- rep(NA_real_, N); if (L < N) pred[(L + 1):N] <- fp$gain * df$climate[seq_len(N - L)]
+  resid <- df$log_response - pred
+  out <- tibble(time = df$time, phase = df$phase,
+                resid  = resid,
+                dresid = c(NA, diff(smooth_ma(resid, 61))))            # smooth THEN diff so d/dt isn't pure noise
+  attr(out, "lag") <- L; attr(out, "gain") <- fp$gain; out
+}
+
+# ---- shared plotting furniture (band shading matches analysis III) --------------------------
+phase_fill <- c(pre = "#9ecae1", disturbance = "grey45", post = "#fdae6b")
+bar_fill   <- phase_fill[c("pre", "post")]
+phase_bands <- function(ph) ph %>% filter(phase != "disturbance") %>%
+  group_by(phase) %>% summarise(xmin = min(time), xmax = max(time), .groups = "drop")
+
+phase_band_layers <- function(d) {
+  bands <- phase_bands(d); td <- d$time[d$phase == "disturbance"]
+  list(geom_rect(data = bands, aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf, fill = phase),
+                 alpha = 0.30, inherit.aes = FALSE),
+       geom_vline(xintercept = td, linetype = 2, colour = "grey70"),
+       scale_fill_manual(values = phase_fill, guide = "none"))
+}
+
+# whole-series residual + its smoothed derivative on a secondary axis, phases shaded AND labelled.
+plot_resid <- function(df, title) {
+  rt <- resid_trace(df); L <- attr(rt, "lag"); g <- attr(rt, "gain")
+  bands <- phase_bands(df)
+  ytop <- max(abs(rt$resid), na.rm = TRUE)
+  sc   <- ytop / max(abs(rt$dresid), na.rm = TRUE)
+  ggplot() +
+    phase_band_layers(df) +
+    geom_hline(yintercept = 0, colour = "grey70", linewidth = 0.3) +
+    geom_line(data = rt, aes(time, dresid * sc), colour = "#d94801", linewidth = 0.25, na.rm = TRUE) +
+    geom_line(data = rt, aes(time, resid),       colour = "#238b45", linewidth = 0.3, na.rm = TRUE) +
+    geom_text(data = mutate(bands, x = (xmin + xmax) / 2),
+              aes(x = x, y = ytop, label = phase), vjust = 1, size = 3, colour = "grey25") +
+    scale_y_continuous(sec.axis = sec_axis(~ . / sc, name = "d(residual)/dt  (smoothed, orange)")) +
+    labs(title = title, x = "time (days)", y = "residual = log(response) − predicted  (green)",
+         subtitle = sprintf("pre-fit predictor:  log(response)(t) ≈ %.3f · climate(t − %d)", g, L))
+}
+
+# time-resolved band metrics; COI-contaminated edges blanked; phases shaded.
+metric_labs <- c(coherence = "coherence", xpower = "cross power", amp_ratio = "amp ratio", lag = "app. lag (d)")
+plot_band_trace <- function(tr, title) {
+  m <- names(metric_labs)
+  long <- tr %>%
+    mutate(across(all_of(m), ~ ifelse(coi_ok, ., NA_real_))) %>%
+    select(time, all_of(m)) %>%
+    pivot_longer(-time, names_to = "metric") %>%
+    mutate(metric = factor(metric, m))
+  ggplot() +
+    phase_band_layers(tr) +
+    geom_line(data = long, aes(time, value), linewidth = 0.3, na.rm = TRUE) +
+    facet_wrap(~ metric, scales = "free_y", ncol = 1, strip.position = "left",
+               labeller = as_labeller(metric_labs)) +
+    labs(title = title, x = "time (days)", y = NULL)
+}
+
+# reshape a summary tibble to long (id keys × metric × value × se).
+metrics_long <- function(sm, keys) {
+  m <- names(metric_labs)
+  val <- sm %>% select(all_of(c(keys, m))) %>%
+    pivot_longer(all_of(m), names_to = "metric", values_to = "value")
+  se  <- sm %>% select(all_of(c(keys, paste0(m, "_se")))) %>%
+    rename_with(~ sub("_se$", "", .x), all_of(paste0(m, "_se"))) %>%
+    pivot_longer(all_of(m), names_to = "metric", values_to = "se")
+  left_join(val, se, by = c(keys, "metric")) %>% mutate(metric = factor(metric, m))
+}
+
+# pre/post bars per metric, ±1 SE (block SE) so effect size is read against uncertainty.
+plot_wave_bars <- function(sm, title) {
+  dat <- metrics_long(sm, "phase")
+  ggplot(dat, aes(phase, value, fill = phase)) +
+    geom_col(width = 0.7) +
+    geom_errorbar(aes(ymin = value - se, ymax = value + se), width = 0.25, colour = "black", na.rm = TRUE) +
+    facet_wrap(~ metric, scales = "free_y", nrow = 1, labeller = as_labeller(metric_labs)) +
+    scale_fill_manual(values = bar_fill, guide = "none") +
+    labs(title = title, x = NULL, y = NULL)
+}
+
+# the settled pre/post table — same columns every site.
+emit_table <- function(sm, caption)
+  cat(kable(sm %>% select(phase, n_blocks, coherence, xpower, amp_ratio, phi, lag),
+            digits = 2, caption = caption), sep = "\n")
+```
+
+```{r load}
+# response (discharge) analyzed in log space → add log_response once at load (prep floored zeros).
+sites <- c("hbef_w1", "hjandrews_GSWS10", "fernow_WS-3", "fernow_WS-5", "santa_barbara_MC06")
+D <- lapply(sites, function(s)
+  read_csv(sprintf("%s__series_daily.csv", s), show_col_types = FALSE) %>%
+    mutate(phase = factor(phase, c("pre", "disturbance", "post")),
+           log_response = log(response)))
+names(D) <- sites
+# section labels come from the tracked CSVs themselves (disturbance/class carried by the prep) —
+# no dependency on any external file, so 04 builds from the committed *__series_daily.csv alone.
+label <- setNames(vapply(D, function(d)
+  sprintf("%s (%s, %s)", d$site[1], d$disturbance[1], d$class[1]), character(1)), sites)
+```
+
+```{r derive}
+# One coherency transform per site → reused by every image, trace and table below (~1 min total).
+WC <- lapply(D, wco)
+TR <- Map(band_trace, WC, D)
+SM <- lapply(TR, wave_summary)
+```
+
+## Data provenance (`ms_interp`)
+
+```{r provenance, results='asis'}
+prov <- bind_rows(lapply(D, function(d) tibble(
+  site = d$site[1],
+  climate_interp_pct  = round(100 * mean(d$climate_interp), 1),
+  response_interp_pct = round(100 * mean(d$response_interp), 1))))
+cat(kable(prov, caption = "Percent of each channel that is MacroSheds gap-fill (modelled), per site. MC06's precip driver is ~88% modelled — read its coherence accordingly."), sep = "\n")
+```
+
+---
+
+# hbef_w1 — chemical addition (pulse)
+
+Chemistry manipulation, not water yield — the seasonal precip→discharge coupling should be a
+near-null across the disturbance. A good reference for what the wavelet returns when nothing
+hydrologic happened.
+
+```{r hbef-resid, fig.height=3.4, fig.cap=fig_n("hbef_w1 — model residual (green) + smoothed derivative (orange, right axis); phases shaded, dashed = disturbance.")}
+plot_resid(D[["hbef_w1"]], paste(label["hbef_w1"], "— model residual & its derivative"))
+```
+
+```{r hbef-wc, fig.height=4.6, fig.cap=fig_n("hbef_w1 — wavelet coherence spectrum (time × period). Arrows = phase; pale COI parabola = edge-unreliable. Note how normalized coherence saturates near 1 across most of the annual band.")}
+plot_wc(WC[["hbef_w1"]], "hbef_w1 — wavelet coherence")
+```
+
+```{r hbef-trace, fig.height=5.2, fig.cap=fig_n("hbef_w1 — band (P≈365) metrics through time; COI edges blanked, phases shaded.")}
+plot_band_trace(TR[["hbef_w1"]], "hbef_w1 — synchrony at the P≈365 band, through time")
+```
+
+```{r hbef-table, results='asis'}
+emit_table(SM[["hbef_w1"]], "hbef_w1 — band synchrony, settled pre vs post (n_blocks = annual cycles the SEs rest on)")
+```
+
+```{r hbef-bars, fig.height=3, fig.cap=fig_n("hbef_w1 — pre vs post band metrics, ±1 SE (block SE).")}
+plot_wave_bars(SM[["hbef_w1"]], "hbef_w1 — band metrics, pre vs post (±1 SE)")
+```
+
+---
+
+# hjandrews_GSWS10 — debris flow (pulse)
+
+A physical channel disturbance that could alter the storm→flow routing. Watch the band amplitude
+ratio and apparent lag across 1986. *(~13% of precip is modelled infill.)*
+
+```{r hja-resid, fig.height=3.4, fig.cap=fig_n("hjandrews_GSWS10 — model residual (green) + derivative (orange); phases shaded, dashed = disturbance.")}
+plot_resid(D[["hjandrews_GSWS10"]], paste(label["hjandrews_GSWS10"], "— model residual & its derivative"))
+```
+
+```{r hja-wc, fig.height=4.6, fig.cap=fig_n("hjandrews_GSWS10 — wavelet coherence spectrum.")}
+plot_wc(WC[["hjandrews_GSWS10"]], "hjandrews_GSWS10 — wavelet coherence")
+```
+
+```{r hja-trace, fig.height=5.2, fig.cap=fig_n("hjandrews_GSWS10 — band metrics through time.")}
+plot_band_trace(TR[["hjandrews_GSWS10"]], "hjandrews_GSWS10 — synchrony at the P≈365 band, through time")
+```
+
+```{r hja-table, results='asis'}
+emit_table(SM[["hjandrews_GSWS10"]], "hjandrews_GSWS10 — band synchrony, settled pre vs post")
+```
+
+```{r hja-bars, fig.height=3, fig.cap=fig_n("hjandrews_GSWS10 — pre vs post band metrics, ±1 SE.")}
+plot_wave_bars(SM[["hjandrews_GSWS10"]], "hjandrews_GSWS10 — band metrics, pre vs post (±1 SE)")
+```
+
+---
+
+# fernow_WS-3 — chemical addition (chronic)
+
+Chronic acidification, open-ended — "post" is a persistently manipulated regime. Chemistry
+target, so like hbef expect little hydrologic signature, but the long record gives the wavelet
+many annual cycles to average.
+
+```{r fw3-resid, fig.height=3.4, fig.cap=fig_n("fernow_WS-3 — model residual (green) + derivative (orange); phases shaded, dashed = disturbance.")}
+plot_resid(D[["fernow_WS-3"]], paste(label["fernow_WS-3"], "— model residual & its derivative"))
+```
+
+```{r fw3-wc, fig.height=4.6, fig.cap=fig_n("fernow_WS-3 — wavelet coherence spectrum.")}
+plot_wc(WC[["fernow_WS-3"]], "fernow_WS-3 — wavelet coherence")
+```
+
+```{r fw3-trace, fig.height=5.2, fig.cap=fig_n("fernow_WS-3 — band metrics through time.")}
+plot_band_trace(TR[["fernow_WS-3"]], "fernow_WS-3 — synchrony at the P≈365 band, through time")
+```
+
+```{r fw3-table, results='asis'}
+emit_table(SM[["fernow_WS-3"]], "fernow_WS-3 — band synchrony, settled pre vs post")
+```
+
+```{r fw3-bars, fig.height=3, fig.cap=fig_n("fernow_WS-3 — pre vs post band metrics, ±1 SE.")}
+plot_wave_bars(SM[["fernow_WS-3"]], "fernow_WS-3 — band metrics, pre vs post (±1 SE)")
+```
+
+---
+
+# fernow_WS-5 — timber harvest (pulse)
+
+The clearest water-yield disturbance (2007 clearcut): reduced transpiration raises discharge and
+can sharpen the storm response — the site where the seasonal-band amplitude ratio has the most
+reason to move.
+
+```{r fw5-resid, fig.height=3.4, fig.cap=fig_n("fernow_WS-5 — model residual (green) + derivative (orange); phases shaded, dashed = disturbance.")}
+plot_resid(D[["fernow_WS-5"]], paste(label["fernow_WS-5"], "— model residual & its derivative"))
+```
+
+```{r fw5-wc, fig.height=4.6, fig.cap=fig_n("fernow_WS-5 — wavelet coherence spectrum.")}
+plot_wc(WC[["fernow_WS-5"]], "fernow_WS-5 — wavelet coherence")
+```
+
+```{r fw5-trace, fig.height=5.2, fig.cap=fig_n("fernow_WS-5 — band metrics through time.")}
+plot_band_trace(TR[["fernow_WS-5"]], "fernow_WS-5 — synchrony at the P≈365 band, through time")
+```
+
+```{r fw5-table, results='asis'}
+emit_table(SM[["fernow_WS-5"]], "fernow_WS-5 — band synchrony, settled pre vs post")
+```
+
+```{r fw5-bars, fig.height=3, fig.cap=fig_n("fernow_WS-5 — pre vs post band metrics, ±1 SE.")}
+plot_wave_bars(SM[["fernow_WS-5"]], "fernow_WS-5 — band metrics, pre vs post (±1 SE)")
+```
+
+---
+
+# santa_barbara_MC06 — burn (pulse)
+
+Semi-arid, intermittent flow, and a **~88% modelled precip driver** — the hardest case. A fire can
+sharply increase runoff, but here both the intermittency (log-floor) and the infilled driver
+undercut the assumptions; read the wavelet output as a demonstration of the method's limits, not a
+measurement of the burn.
+
+```{r mc06-resid, fig.height=3.4, fig.cap=fig_n("santa_barbara_MC06 — model residual (green) + derivative (orange); phases shaded, dashed = disturbance.")}
+plot_resid(D[["santa_barbara_MC06"]], paste(label["santa_barbara_MC06"], "— model residual & its derivative"))
+```
+
+```{r mc06-wc, fig.height=4.6, fig.cap=fig_n("santa_barbara_MC06 — wavelet coherence spectrum. Read against the ~88% modelled precip driver.")}
+plot_wc(WC[["santa_barbara_MC06"]], "santa_barbara_MC06 — wavelet coherence")
+```
+
+```{r mc06-trace, fig.height=5.2, fig.cap=fig_n("santa_barbara_MC06 — band metrics through time.")}
+plot_band_trace(TR[["santa_barbara_MC06"]], "santa_barbara_MC06 — synchrony at the P≈365 band, through time")
+```
+
+```{r mc06-table, results='asis'}
+emit_table(SM[["santa_barbara_MC06"]], "santa_barbara_MC06 — band synchrony, settled pre vs post")
+```
+
+```{r mc06-bars, fig.height=3, fig.cap=fig_n("santa_barbara_MC06 — pre vs post band metrics, ±1 SE.")}
+plot_wave_bars(SM[["santa_barbara_MC06"]], "santa_barbara_MC06 — band metrics, pre vs post (±1 SE)")
+```
+
+---
+
+# Cross-site summary
+
+Post-minus-pre change in the four band metrics per site, each Δ carrying its propagated SE
+(`√(se_pre² + se_post²)`). In analysis II the synthetic scenarios separated cleanly and taught the
+lesson that *coherence alone is not enough*; here the question is which of these real sites, if
+any, moves a **power/amplitude** channel beyond its (now well-resolved) error.
+
+```{r summary}
+sm_all <- bind_rows(SM, .id = "site")
+delta <- metrics_long(sm_all, c("site", "phase")) %>%
+  pivot_wider(names_from = phase, values_from = c(value, se)) %>%
+  mutate(delta    = value_post - value_pre,
+         delta_se = sqrt(se_pre^2 + se_post^2),
+         site     = factor(site, sites))
+```
+
+```{r summary-table, results='asis'}
+cat(kable(delta %>% transmute(site, metric = metric_labs[as.character(metric)],
+                              pre = value_pre, post = value_post, delta, delta_se),
+          digits = 2, caption = "pre → post change in band metrics, all sites (delta_se = propagated ±1 SE)"), sep = "\n")
+```
+
+```{r summary-fig, fig.height=4.5, fig.cap=fig_n("Post − pre change per site, faceted by band metric (free y), ±1 propagated SE. The lesson from analysis II carries over: coherence barely moves anywhere (it saturates on real data too), so if anything registers it is in cross-power / amplitude.")}
+ggplot(delta, aes(site, delta, fill = site)) +
+  geom_col() +
+  geom_errorbar(aes(ymin = delta - delta_se, ymax = delta + delta_se), width = 0.25, colour = "black", na.rm = TRUE) +
+  geom_hline(yintercept = 0, colour = "grey70") +
+  facet_wrap(~ metric, scales = "free_y", labeller = as_labeller(metric_labs)) +
+  scale_fill_brewer(palette = "Set2", guide = "none") +
+  labs(title = "Post − pre change by band metric (free y axes; ±1 SE)", x = NULL, y = "post − pre") +
+  theme(axis.text.x = element_text(angle = 40, hjust = 1))
+```
+
+**Takeaways — the native wavelet view on real synchrony, next to analysis III.** The lesson
+analysis II taught on synthetic data reappears **unprompted** on real watersheds: WaveletComp's
+*normalized, smoothed* coherence **saturates near 1 across the whole record at every site** (see
+the red spectra), so — exactly as in the synthetic Desync case — coherence is not a usable
+discriminator here; whatever real change exists must be read from **un-normalized cross-power and
+band amplitude**, which the wavelet still resolves with well-populated error bars (decades of
+cycles, unlike the synthetic ~2). Against analysis III: the peak/moments lens frayed on the
+episodic driver (an unstable "period," a degenerate `MC06`), while the wavelet keeps a clean,
+time-resolved amplitude/lag read but hands back a **falsely reassuring coherence** — two methods,
+two different partial views, each incomplete in its own way. That, not any single site's number,
+is the point of running both: the choice of synchrony metric decides what you can and cannot see,
+and on real, less-deterministic coupling neither view is sufficient alone.
+```

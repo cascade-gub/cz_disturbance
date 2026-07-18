@@ -24,7 +24,8 @@ Desktop.ini
 # Ignore ALL project data. The ONLY data kept in git is the three
 # synthetic disturbance–response CSVs, whitelisted at the bottom.
 data/
-ms_data/
+# raw MacroSheds download (feathers + shapefiles); notebooks/CSVs directly in ms_data/ ARE tracked
+ms_data/v2/
 plots/
 zips/
 syn_data/pre_loglinear/
@@ -39,3 +40,5 @@ syn_data/pre_loglinear/
 !syn_data/synthetic_shift.csv
 !syn_data/synthetic_desync.csv
 !syn_data/synthetic_return.csv
+# and the five real-data wide series (the tracked interface for analyses 03/04).
+!ms_data/*__series_daily.csv

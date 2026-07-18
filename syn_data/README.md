@@ -8,6 +8,15 @@ self-contained HTML that is also published for GitHub Pages.
 > For the full generative spec (every parameter, exact phase bands, correlation values) see
 > [`CLAUDE.md`](CLAUDE.md). This README is the human-facing orientation to the folder.
 
+**Where this fits.** This folder is the **idealised leg** of a two-part **methods comparison**:
+how two different approaches to quantifying driver→response *synchrony* — central-tendency /
+peak-spacing (analysis I) vs Morlet wavelet (analysis II) — behave, and what each can and cannot
+see. Here they run on a clean, deterministic system to establish the **theory and expectations**.
+The **real-data leg** — [`../ms_data/`](../ms_data/) (analyses III/IV, `prep_ms_series`) — then
+runs the *same two methods* on real MacroSheds watersheds to test how they hold up under
+less-deterministic synchrony. Each method is a different, partial perspective; the point is to see
+where each one is strong, and where it frays or is fooled.
+
 ---
 
 ## At a glance

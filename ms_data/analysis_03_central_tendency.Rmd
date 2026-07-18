@@ -1,0 +1,434 @@
+---
+title: "Real-data disturbance–response III — central tendency, variance & peak synchrony"
+subtitle: "The peak/moments approach on real MacroSheds precip→discharge — how the simplest synchrony method holds up off the idealised bench (cf. analysis I)"
+author: "nic (nic@cascadeclimate.org)"
+date: "`r Sys.Date()`"
+# Knit → render in place, then copy the self-contained HTML to <repo-root>/docs for GitHub Pages.
+knit: |
+  (function(input, encoding) {
+    out  <- rmarkdown::render(input, encoding = encoding)
+    docs <- file.path(dirname(normalizePath(input)), "..", "docs")
+    dir.create(docs, showWarnings = FALSE, recursive = TRUE)
+    file.copy(out, docs, overwrite = TRUE)
+    out
+  })
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    code_folding: hide
+    theme: darkly
+    highlight: breezedark
+    fig_width: 10
+    fig_caption: true
+    self_contained: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
+                      dev.args = list(bg = "white"))   # native (light) PNG canvas; white matting added via CSS
+suppressMessages({ library(dplyr); library(tidyr); library(readr); library(ggplot2)
+                   library(knitr); library(patchwork) })
+theme_set(theme_bw(base_size = 11) + theme(legend.position = "bottom"))
+P <- 365   # seasonal (annual) period in days — the band this method reads synchrony at; wraps phase lag into [0,P).
+fig_n <- local({ i <- 0L; function(x) { i <<- i + 1L; paste0("Figure ", i, ". ", x) } })
+```
+
+```{css figure-matting, echo=FALSE}
+/* White matting behind every figure: native light plots read cleanly on the darkly page. */
+.main-container img,
+div.figure img {
+  background-color: #ffffff;
+  padding: 10px;
+  border-radius: 6px;
+  box-sizing: border-box;
+  max-width: 100%;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+}
+```
+
+This is **analysis I's method — per-channel moments + peak-derived synchrony — run on real
+watersheds** instead of the synthetic ideal. The study is a **methods comparison**: analysis I
+(`syn_data/analysis_01`) established, on a clean lagged log-linear system, what this simplest
+approach can see (regime amplitude, coarse lag, peak-spacing regularity) and where it is expected
+to *fray* (noisy / irregular signals, few cycles). Here we watch it meet **less-deterministic
+real synchrony**: `climate` = daily precipitation (the exogenous, undisturbed driver, kept
+linear) and `response` = daily discharge (analyzed as `log(response)`), across five screened
+disturbances (see `../qualifying_disturbances.csv`, built in `prep_ms_series.Rmd`). Same two
+moves as analysis I: **(1)** quantify each channel with central tendency + variance in the
+settled `pre` / `post` windows; **(2)** turn those, plus peak spacings, into a synchrony
+description across the disturbance. Moments (incl. covariance) and peaks only — no correlation
+coefficient, spectra, or wavelets (that is analysis IV's job).
+
+Unlike the synthetic driver, **daily precip is episodic, not a clean sine**, discharge carries
+snowmelt/storage lag and long-term trend, and one stream (`MC06`) is intermittent — so read this
+as a stress-test of the peak/moments lens, not a search for a known answer. Where it strains
+(peaks fraying on storm-spiky series, an unstable period), that *is* the finding, and analysis IV
+takes the same sites into the wavelet view for contrast.
+
+*Error-bar caveat (as in analysis I): the peak-metric SEs are block/sample SEs over the ~decades
+of annual cycles in each window — coarser than they look on autocorrelated series; read as
+relative guides.*
+
+## Helpers
+
+```{r helpers}
+# centered moving average (window w); NA at the ±(w-1)/2 ends — used for peak-finding only.
+smooth_ma <- function(x, w = 61) as.numeric(stats::filter(x, rep(1 / w, w)))
+
+# local maxima of a smoothed copy, thinned greedily by height to a minimum separation `gap`.
+# Two noise defences: keep only candidates above the window mean, then greedy gap≈0.6P ⇒ ≤1
+# peak/season. Real daily series are storm-spiky, so we smooth harder than analysis I (w≈2 months)
+# to recover the seasonal peak rather than individual storms.
+find_peaks <- function(x, w = 61, gap = round(0.6 * P)) {
+  s <- smooth_ma(x, w); n <- length(s)
+  interior <- s[2:(n - 1)] > s[1:(n - 2)] & s[2:(n - 1)] >= s[3:n]
+  cand <- which(c(FALSE, interior, FALSE))            # NA comparisons drop out of which()
+  cand <- cand[s[cand] > mean(s, na.rm = TRUE)]       # peaks lie above central tendency
+  cand <- cand[order(s[cand], decreasing = TRUE)]     # tallest first
+  keep <- integer(0)
+  for (i in cand) if (all(abs(i - keep) >= gap)) keep <- c(keep, i)
+  sort(keep)
+}
+
+# per-channel moments: central tendency (mean, median) + spread (sd, var, IQR, range).
+series_stats <- function(x)
+  tibble(mean = mean(x), median = median(x), sd = sd(x),
+         var = var(x), IQR = IQR(x), range = diff(range(x)))
+
+# per-response-peak offset behind the preceding climate peak, wrapped into [0,P). Empty if either
+# channel has no peak. phase_lag = its mean; the vector also feeds the metric's standard error.
+peak_offsets <- function(pc, pr) {
+  if (!length(pc) || !length(pr)) return(numeric(0))
+  vapply(pr, function(tr) {
+    prior <- pc[pc <= tr]
+    d <- if (length(prior)) tr - max(prior) else tr - min(pc)
+    ((d %% P) + P) %% P
+  }, numeric(1))
+}
+se_mean  <- function(x) if (length(x) > 1) sd(x) / sqrt(length(x)) else NA_real_  # SE of a sample mean
+
+# covariance SE from per-cycle estimates: cut the window into P-long (annual) blocks, cov within
+# each, SE = sd(block covs)/√n_blocks. Valid under autocorrelation. Here n_blocks = the ~decades
+# of years in each window, so it is far better resolved than the synthetic ~4 cycles.
+cov_se <- function(x, y) {
+  blk <- (seq_along(x) - 1) %/% P
+  cv  <- tapply(seq_along(x), blk, function(i) if (length(i) > 2) cov(x[i], y[i]) else NA_real_)
+  se_mean(cv[is.finite(cv)])
+}
+
+# synchrony summary for one settled window (climate/response columns). Peaks are found ONCE here
+# and every derived quantity — including the mean-type standard errors — reuses them.
+# period_resp_sd = spacing irregularity: small ⇒ clean seasonal oscillation, large ⇒ irregular.
+sync_one <- function(sub) {
+  pc <- find_peaks(sub$climate); pr <- find_peaks(sub$log_response)   # response peaks in log space
+  dpr <- diff(pr); off <- peak_offsets(pc, pr)      # spacings / offsets feed both value and SE
+  ac <- sd(sub$climate); ar <- sd(sub$log_response) # amp_response = sd(log R); sd computed once
+  tibble(n = nrow(sub),
+         period_climate     = if (length(pc) > 1) mean(diff(pc)) else NA_real_,
+         period_response    = if (length(dpr))    mean(dpr)      else NA_real_,
+         period_response_se = se_mean(dpr),          # SE of the mean inter-peak interval
+         period_resp_sd     = if (length(dpr) > 1) sd(dpr) else NA_real_,
+         amp_climate        = ac,
+         amp_response       = ar,
+         amp_ratio          = ar / ac,
+         phase_lag          = if (length(off)) mean(off) else NA_real_,
+         phase_lag_se       = se_mean(off))          # SE of the mean per-peak offset
+}
+
+# tables + figure over the settled pre/post windows (disturbance step/span excluded).
+stats_by_period <- function(df)
+  df %>% filter(phase %in% c("pre", "post")) %>%
+    pivot_longer(c(climate, log_response), names_to = "series") %>%
+    group_by(phase, series) %>% group_modify(~ series_stats(.x$value)) %>% ungroup() %>%
+    mutate(phase = factor(phase, c("pre", "post"))) %>% arrange(phase, series)
+
+sync_by_period <- function(df)
+  bind_rows(pre  = sync_one(filter(df, phase == "pre")),
+            post = sync_one(filter(df, phase == "post")), .id = "phase") %>%
+    mutate(phase = factor(phase, c("pre", "post")))
+
+# contiguous phase spans → shaded background bands; the disturbance (a step or a short span) is
+# drawn as a dashed line. climate (mm) and log(response) live on very different scales, so unlike
+# analysis I we facet the two channels with free y axes (a shared axis would bury one of them).
+phase_fill <- c(pre = "#9ecae1", disturbance = "grey45", post = "#fdae6b")
+plot_series <- function(df, title) {
+  bands <- df %>% filter(phase != "disturbance") %>% group_by(phase) %>%
+    summarise(xmin = min(time), xmax = max(time), .groups = "drop")
+  td <- df$time[df$phase == "disturbance"]
+  long <- pivot_longer(df, c(climate, log_response), names_to = "var") %>%
+    mutate(var = recode(var, log_response = "log(response) = log discharge",
+                             climate = "climate = precip (mm)"))
+  ggplot() +
+    geom_rect(data = bands, aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf, fill = phase),
+              alpha = 0.35, inherit.aes = FALSE) +
+    geom_vline(xintercept = td, linetype = 2, colour = "grey70") +
+    geom_line(data = long, aes(time, value, colour = var), linewidth = 0.2, na.rm = TRUE) +
+    facet_wrap(~ var, ncol = 1, scales = "free_y") +
+    scale_fill_manual(values = phase_fill, guide = "none") +
+    scale_colour_manual(values = c("climate = precip (mm)" = "#3182bd",
+                                   "log(response) = log discharge" = "#6a51a3"), guide = "none") +
+    labs(title = title, x = "time (days)", y = NULL)
+}
+
+# bar companions to the two tables; pre/post reuse the phase-band fills. free scales because
+# metrics live on different units.
+bar_fill <- c(pre = "#9ecae1", post = "#fdae6b")
+plot_moments <- function(stats_x, df, title, errbar = FALSE) {   # central tendency + spread, per channel
+  st <- stats_x %>% select(phase, series, mean, median, sd)
+  nn <- df %>% filter(phase %in% c("pre", "post")) %>% count(phase, name = "n")   # rows per window
+  long <- st %>% left_join(nn, by = "phase") %>%
+    mutate(se_mean = sd / sqrt(n)) %>%
+    pivot_longer(c(mean, median, sd), names_to = "measure") %>%
+    mutate(se = ifelse(measure == "mean", se_mean, NA_real_)) %>%
+    select(phase, series, measure, value, se)
+  # joint moment: one cov(climate, log_response) per regime → own facet, block (per-cycle) SE.
+  cov <- df %>% filter(phase %in% c("pre", "post")) %>% group_by(phase) %>%
+    summarise(value = cov(climate, log_response), se = cov_se(climate, log_response), .groups = "drop") %>%
+    mutate(phase = factor(phase, c("pre", "post")), series = "clim×log(resp)", measure = "cov")
+  long <- bind_rows(long, cov) %>%
+    mutate(measure = factor(measure, c("mean", "median", "sd", "cov")))
+  ggplot(long, aes(series, value, fill = phase)) +
+    geom_col(position = position_dodge(0.8), width = 0.7) +
+    { if (errbar) geom_errorbar(aes(ymin = value - se, ymax = value + se),
+        position = position_dodge(0.8), width = 0.25, colour = "black", na.rm = TRUE) } +
+    facet_wrap(~ measure, scales = "free") +
+    scale_fill_manual(values = bar_fill) +
+    labs(title = title, x = NULL, y = NULL, fill = NULL) +
+    theme(axis.text.x = element_text(angle = 20, hjust = 1))
+}
+
+# peak-derived synchrony discriminators; the precomputed sync tibble already carries the mean-type SEs.
+plot_sync <- function(sync_x, title) {
+  se_long <- sync_x %>%
+    transmute(phase, period_response = period_response_se, phase_lag = phase_lag_se) %>%
+    pivot_longer(-phase, names_to = "metric", values_to = "se")
+  dat <- sync_x %>% select(phase, period_response, amp_ratio, phase_lag, period_resp_sd) %>%
+    pivot_longer(-phase, names_to = "metric") %>%
+    left_join(se_long, by = c("phase", "metric")) %>%
+    mutate(metric = factor(metric, c("period_response", "amp_ratio", "phase_lag", "period_resp_sd")))
+  ggplot(dat, aes(phase, value, fill = phase)) +
+    geom_col(width = 0.7) +
+    geom_errorbar(aes(ymin = value - se, ymax = value + se), width = 0.25, colour = "black", na.rm = TRUE) +
+    facet_wrap(~ metric, scales = "free_y", nrow = 1) +
+    scale_fill_manual(values = bar_fill, guide = "none") +
+    labs(title = title, x = NULL, y = NULL)
+}
+```
+
+```{r load}
+# response (discharge) is analyzed in log space → add log_response once at load. The prep step
+# already floored zero-flow days so log() is finite everywhere (see prep_ms_series.Rmd).
+sites <- c("hbef_w1", "hjandrews_GSWS10", "fernow_WS-3", "fernow_WS-5", "santa_barbara_MC06")
+D <- lapply(sites, function(s)
+  read_csv(sprintf("%s__series_daily.csv", s), show_col_types = FALSE) %>%
+    mutate(phase = factor(phase, c("pre", "disturbance", "post")),
+           log_response = log(response)))
+names(D) <- sites
+# section labels come from the tracked CSVs themselves (disturbance/class carried by the prep) —
+# no dependency on any external file, so 03 builds from the committed *__series_daily.csv alone.
+label <- setNames(vapply(D, function(d)
+  sprintf("%s (%s, %s)", d$site[1], d$disturbance[1], d$class[1]), character(1)), sites)
+```
+
+```{r derive}
+# Each site's moment / synchrony summaries are computed ONCE here (find_peaks runs a single time
+# per window) and reused by every table, figure, and the cross-site summary below.
+STATS <- lapply(D, stats_by_period)
+SYNC  <- lapply(D, sync_by_period)
+```
+
+## Data provenance (`ms_interp`)
+
+Before reading anything into pre/post differences: **discharge (the `response`) is 100% observed
+at every site**, but **precipitation (the `climate` driver) is partly MacroSheds modelled infill**
+at two. This matters most at `MC06`, whose precip is ~88% gap-filled — coupling there is coupling
+to a *modelled* driver. Fractions come straight from the `*_interp` flags carried by
+`prep_ms_series.Rmd`.
+
+```{r provenance, results='asis'}
+prov <- bind_rows(lapply(D, function(d) tibble(
+  site = d$site[1],
+  climate_interp_pct  = round(100 * mean(d$climate_interp), 1),
+  response_interp_pct = round(100 * mean(d$response_interp), 1))))
+cat(kable(prov, caption = "Percent of each channel that is MacroSheds gap-fill (modelled), per site"), sep = "\n")
+```
+
+---
+
+# hbef_w1 — chemical addition (pulse)
+
+Hubbard Brook W1 received a whole-watershed **calcium (wollastonite) addition** in 1999. The
+manipulation targets **chemistry**, not water yield, so the precip→discharge coupling is expected
+to be **largely unchanged** — a useful null for this lens (any pre/post move here is climate, not
+treatment).
+
+```{r hbef-fig, fig.height=4.4, fig.cap=fig_n("hbef_w1 — precip (climate) & log(discharge) over time, pre/post shaded, dashed = disturbance.")}
+plot_series(D[["hbef_w1"]], label["hbef_w1"])
+```
+
+```{r hbef-tables, results='asis'}
+cat(kable(STATS[["hbef_w1"]], digits = 3, caption = "hbef_w1 — per-channel moments, settled pre/post"), sep = "\n")
+cat("\n\n")
+cat(kable(SYNC[["hbef_w1"]] %>% select(-ends_with("_se")), digits = 2,
+          caption = "hbef_w1 — peak-derived synchrony, pre vs post"), sep = "\n")
+```
+
+```{r hbef-bars, fig.height=8, fig.cap=fig_n("hbef_w1 — per-channel moments + joint covariance (top) and peak-derived synchrony metrics (bottom), pre vs post. Error bars = ±1 SE where defined.")}
+(plot_moments(STATS[["hbef_w1"]], D[["hbef_w1"]], "hbef_w1 — moments by channel, pre vs post", errbar = TRUE) /
+ plot_sync(SYNC[["hbef_w1"]], "hbef_w1 — synchrony metrics, pre vs post")) +
+  plot_layout(heights = c(2, 1))
+```
+
+---
+
+# hjandrews_GSWS10 — debris flow (pulse)
+
+HJ Andrews WS10, a small steep catchment, was scoured by a **1986 debris flow**. A physical
+channel disturbance can plausibly shift the storm→flow response; watch whether peak spacing or
+amplitude ratio moves beyond climate variability. *(Provenance: ~13% of this site's precip is
+modelled infill — see the table above.)*
+
+```{r hja-fig, fig.height=4.4, fig.cap=fig_n("hjandrews_GSWS10 — precip & log(discharge), pre/post shaded, dashed = disturbance.")}
+plot_series(D[["hjandrews_GSWS10"]], label["hjandrews_GSWS10"])
+```
+
+```{r hja-tables, results='asis'}
+cat(kable(STATS[["hjandrews_GSWS10"]], digits = 3, caption = "hjandrews_GSWS10 — per-channel moments, settled pre/post"), sep = "\n")
+cat("\n\n")
+cat(kable(SYNC[["hjandrews_GSWS10"]] %>% select(-ends_with("_se")), digits = 2,
+          caption = "hjandrews_GSWS10 — peak-derived synchrony, pre vs post"), sep = "\n")
+```
+
+```{r hja-bars, fig.height=8, fig.cap=fig_n("hjandrews_GSWS10 — moments + covariance (top) and synchrony metrics (bottom), pre vs post; ±1 SE where defined.")}
+(plot_moments(STATS[["hjandrews_GSWS10"]], D[["hjandrews_GSWS10"]], "hjandrews_GSWS10 — moments by channel, pre vs post", errbar = TRUE) /
+ plot_sync(SYNC[["hjandrews_GSWS10"]], "hjandrews_GSWS10 — synchrony metrics, pre vs post")) +
+  plot_layout(heights = c(2, 1))
+```
+
+---
+
+# fernow_WS-3 — chemical addition (chronic)
+
+Fernow WS3 has received **chronic artificial acidification** (ammonium sulfate) since 1989 — an
+*open-ended* treatment, so "post" is a persistently manipulated regime rather than a settled
+recovery. Like W1 the target is chemistry; a strong discharge signature is not expected, but the
+long records give this method many cycles to average.
+
+```{r fw3-fig, fig.height=4.4, fig.cap=fig_n("fernow_WS-3 — precip & log(discharge), pre/post shaded, dashed = disturbance.")}
+plot_series(D[["fernow_WS-3"]], label["fernow_WS-3"])
+```
+
+```{r fw3-tables, results='asis'}
+cat(kable(STATS[["fernow_WS-3"]], digits = 3, caption = "fernow_WS-3 — per-channel moments, settled pre/post"), sep = "\n")
+cat("\n\n")
+cat(kable(SYNC[["fernow_WS-3"]] %>% select(-ends_with("_se")), digits = 2,
+          caption = "fernow_WS-3 — peak-derived synchrony, pre vs post"), sep = "\n")
+```
+
+```{r fw3-bars, fig.height=8, fig.cap=fig_n("fernow_WS-3 — moments + covariance (top) and synchrony metrics (bottom), pre vs post; ±1 SE where defined.")}
+(plot_moments(STATS[["fernow_WS-3"]], D[["fernow_WS-3"]], "fernow_WS-3 — moments by channel, pre vs post", errbar = TRUE) /
+ plot_sync(SYNC[["fernow_WS-3"]], "fernow_WS-3 — synchrony metrics, pre vs post")) +
+  plot_layout(heights = c(2, 1))
+```
+
+---
+
+# fernow_WS-5 — timber harvest (pulse)
+
+Fernow WS5 was **clearcut in 2007**. Forest removal is the classic water-yield disturbance — reduced
+transpiration raises discharge and can sharpen the storm response — so this is the site where the
+**precip→discharge lens should have the most to see**.
+
+```{r fw5-fig, fig.height=4.4, fig.cap=fig_n("fernow_WS-5 — precip & log(discharge), pre/post shaded, dashed = disturbance.")}
+plot_series(D[["fernow_WS-5"]], label["fernow_WS-5"])
+```
+
+```{r fw5-tables, results='asis'}
+cat(kable(STATS[["fernow_WS-5"]], digits = 3, caption = "fernow_WS-5 — per-channel moments, settled pre/post"), sep = "\n")
+cat("\n\n")
+cat(kable(SYNC[["fernow_WS-5"]] %>% select(-ends_with("_se")), digits = 2,
+          caption = "fernow_WS-5 — peak-derived synchrony, pre vs post"), sep = "\n")
+```
+
+```{r fw5-bars, fig.height=8, fig.cap=fig_n("fernow_WS-5 — moments + covariance (top) and synchrony metrics (bottom), pre vs post; ±1 SE where defined.")}
+(plot_moments(STATS[["fernow_WS-5"]], D[["fernow_WS-5"]], "fernow_WS-5 — moments by channel, pre vs post", errbar = TRUE) /
+ plot_sync(SYNC[["fernow_WS-5"]], "fernow_WS-5 — synchrony metrics, pre vs post")) +
+  plot_layout(heights = c(2, 1))
+```
+
+---
+
+# santa_barbara_MC06 — burn (pulse)
+
+Santa Barbara MC06 (a semi-arid coastal catchment) burned in the **2009 Jesusita fire**. The
+stream is **intermittent** (many floored zero-flow days — note the log-space floor), and the
+precip record is shorter (from 2000), so this is the hardest case for a method that assumes a
+clean recurring seasonal peak — expect the peak lens to strain here. **Provenance caveat:** ~88%
+of MC06's precip is MacroSheds modelled infill, so any coupling read here is to a *modelled*
+driver, not observed rain.
+
+```{r mc06-fig, fig.height=4.4, fig.cap=fig_n("santa_barbara_MC06 — precip & log(discharge), pre/post shaded, dashed = disturbance. Note the intermittent-flow floor.")}
+plot_series(D[["santa_barbara_MC06"]], label["santa_barbara_MC06"])
+```
+
+```{r mc06-tables, results='asis'}
+cat(kable(STATS[["santa_barbara_MC06"]], digits = 3, caption = "santa_barbara_MC06 — per-channel moments, settled pre/post"), sep = "\n")
+cat("\n\n")
+cat(kable(SYNC[["santa_barbara_MC06"]] %>% select(-ends_with("_se")), digits = 2,
+          caption = "santa_barbara_MC06 — peak-derived synchrony, pre vs post"), sep = "\n")
+```
+
+```{r mc06-bars, fig.height=8, fig.cap=fig_n("santa_barbara_MC06 — moments + covariance (top) and synchrony metrics (bottom), pre vs post; ±1 SE where defined.")}
+(plot_moments(STATS[["santa_barbara_MC06"]], D[["santa_barbara_MC06"]], "santa_barbara_MC06 — moments by channel, pre vs post", errbar = TRUE) /
+ plot_sync(SYNC[["santa_barbara_MC06"]], "santa_barbara_MC06 — synchrony metrics, pre vs post")) +
+  plot_layout(heights = c(2, 1))
+```
+
+---
+
+# Cross-site summary
+
+Post-minus-pre change in the peak-synchrony discriminators across all five sites. Read against
+analysis I's synthetic result: there the three scenarios cleanly separated (Shift moved amp
+ratio + lag, Desync spiked period-sd, Return sat at zero). On real data the question is different
+— **how legibly does this method register anything at all**, and which sites move beyond the
+climate-driven pre/post wobble.
+
+```{r summary, fig.height=4}
+sync_all <- bind_rows(SYNC, .id = "site")
+delta <- sync_all %>%
+  select(site, phase, amp_ratio, phase_lag, period_resp_sd) %>%
+  pivot_longer(c(amp_ratio, phase_lag, period_resp_sd), names_to = "metric") %>%
+  pivot_wider(names_from = phase, values_from = value) %>%
+  mutate(delta = post - pre, site = factor(site, sites))
+```
+
+```{r summary-table, results='asis'}
+cat(kable(delta %>% select(site, metric, pre, post, delta), digits = 2,
+          caption = "pre → post change in synchrony discriminators, all sites"), sep = "\n")
+```
+
+```{r summary-fig, fig.height=4.5, fig.cap=fig_n("Post − pre change per site, faceted by discriminator (free y). Unlike the synthetic scenarios these do not fall into tidy signatures — the peak/moments lens gives a noisy, partial read on real coupling, motivating the wavelet view in analysis IV.")}
+ggplot(delta, aes(site, delta, fill = site)) +
+  geom_col() +
+  geom_hline(yintercept = 0, colour = "grey70") +
+  facet_wrap(~ metric, scales = "free_y",
+             labeller = as_labeller(c(amp_ratio = "amp ratio", phase_lag = "phase lag",
+                                      period_resp_sd = "response-period sd"))) +
+  scale_fill_brewer(palette = "Set2", guide = "none") +
+  labs(title = "Post − pre change by discriminator (free y axes)", x = NULL, y = "post − pre") +
+  theme(axis.text.x = element_text(angle = 40, hjust = 1))
+```
+
+**Takeaways — the peak/moments lens on real synchrony.** On the idealised data (analysis I) this
+method was decisive; here it is **partial and noisy**. Precip's episodic, non-sinusoidal
+character means "peaks" and a stable "period" are already shaky for the driver, the amplitude
+ratio no longer maps to a clean β, and real pre/post differences are entangled with decadal
+climate variability — so a moves-beyond-error read is hard to defend at most sites. That
+limitation is the point: the simplest synchrony description degrades gracefully but loses
+resolution off the deterministic bench. **Analysis IV** takes these same five sites into the
+Morlet-wavelet view, which resolves coupling jointly in time and frequency and — as the synthetic
+Desync case warned — can see (and be fooled in) ways this method cannot.
+```
