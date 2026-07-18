@@ -19,6 +19,7 @@
     .desc { display: block; font-weight: 400; color: #9aa0a6; font-size: .92rem; margin-top: .2rem; }
     footer { margin-top: 2.5rem; color: #888; font-size: .85rem; }
     h2 { font-size: 1.1rem; margin-top: 2.5rem; margin-bottom: .4rem; }
+    h3 { font-size: .95rem; font-weight: 600; color: #c9cdd1; margin: 1.4rem 0 .3rem; }
     table.commits { width: 100%; border-collapse: collapse; font-size: .88rem; }
     table.commits th, table.commits td { text-align: left; padding: .45rem .5rem;
            border-bottom: 1px solid #8883; vertical-align: top; }
@@ -52,10 +53,19 @@
       <span class="desc">Carves five screened MacroSheds disturbances into the same climate(precip)/response(discharge)/phase shape the analyses read.</span></li>
     <li><a href="eda_timeseries.html">EDA — disturbance-site time series</a>
       <span class="desc">Daily discharge &amp; precipitation, grab-sample NO3 &amp; conductance across the five MacroSheds disturbance sites: coverage, within-site stacks, z-scored synchrony, and between-site overlays.</span></li>
+  </ul>
+
+  <h3>P–Q · precipitation → discharge</h3>
+  <ul>
     <li><a href="analysis_03_central_tendency.html">Analysis III — central tendency &amp; peak synchrony</a>
       <span class="desc">Analysis I's peak/moments method on real precip→discharge across five disturbances — where it frays off the idealised bench.</span></li>
     <li><a href="analysis_04_wavelet_synchrony.html">Analysis IV — wavelet synchrony</a>
       <span class="desc">Analysis II's Morlet method on the same five sites at the annual band — coherence saturates, cross-power/amplitude carry the story.</span></li>
+  </ul>
+
+  <h3>C–Q · discharge → nitrate concentration</h3>
+  <ul>
+    <li><span class="desc">A wavelet mirror of Analysis IV on the noisier concentration–discharge coupling: nitrate concentration is only partially predicted by discharge — a less-causal, higher-noise test of the method. <em>In progress.</em></span></li>
   </ul>
   <h2>Changelog</h2>
   <p id="commits-status">Loading recent commits…</p>

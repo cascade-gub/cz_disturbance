@@ -105,6 +105,14 @@ build_site <- function(row) {
   pv <- p %>% filter(date >= lo, date <= hi) %>% transmute(date, precip    = val, p_interp = ms_interp == 1)
   d  <- grid %>% left_join(qv, by = "date") %>% left_join(pv, by = "date")
 
+  # Corrupt-precip guard. MacroSheds' Santa Barbara (MC06) precip carries impossible gap-fill
+  # spikes (~6.15e6 mm/d, all ms_interp == 1); real daily precip here is < 170 mm/d. Flag values
+  # > 500 mm/d, blank them, and linearly interpolate on the daily grid so the driver stays
+  # continuous (WaveletComp needs a gap-free series). Only MC06 is affected; harmless elsewhere.
+  d$climate_corrupt <- !is.na(d$precip) & d$precip > 500
+  d$precip[d$climate_corrupt] <- NA_real_
+  if (anyNA(d$precip)) d$precip <- approx(seq_len(nrow(d)), d$precip, seq_len(nrow(d)), rule = 2)$y
+
   # log floor = half the 1st-percentile of positive flow. Robust to near-zero trace values (e.g.
   # hbef has positive readings ~3e-5 L/s); flooring at the raw minimum would put no-flow days at an
   # absurd log outlier (~ -11) that dominates the variance. The 1st-pct floor keeps them "very low".
@@ -117,6 +125,7 @@ build_site <- function(row) {
     response = pmax(discharge, eps),                     # floored discharge (L/s), strictly positive
     zero_flow = discharge <= 0,                          # days that were floored (intermittent flow)
     climate_interp  = p_interp,                          # precip day is MacroSheds gap-fill (modelled)
+    climate_corrupt = climate_corrupt,                   # precip day was an impossible spike, blanked+interpolated (MC06 only)
     response_interp = q_interp,                          # discharge day is gap-fill (0% at every site)
     phase = factor(ifelse(date < ds, "pre",
                    ifelse(date <= de, "disturbance", "post")),
@@ -146,6 +155,7 @@ summ <- bind_rows(lapply(series, function(s) tibble(
   pre_days  = sum(s$phase == "pre"),
   post_days = sum(s$phase == "post"),
   zero_flow_days = sum(s$zero_flow),
+  climate_corrupt_days = sum(s$climate_corrupt),                  # impossible precip spikes blanked+interpolated (MC06 only)
   climate_interp_pct  = round(100 * mean(s$climate_interp), 1),   # % of precip days that are modelled infill
   response_interp_pct = round(100 * mean(s$response_interp), 1),  # % of discharge days infilled (≈0)
   med_climate = median(s$climate), med_response = median(s$response))))
