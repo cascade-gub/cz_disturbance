@@ -34,7 +34,10 @@ if (!requireNamespace("WaveletComp", quietly = TRUE))                  # Wavelet
   stop("analysis_04 needs WaveletComp — install once with  install.packages('WaveletComp')")
 suppressMessages({ library(dplyr); library(tidyr); library(readr); library(ggplot2)
                    library(knitr); library(patchwork); library(WaveletComp) })
+source("../R/wavelet_kernel.R")   # shared red-noise cross-power significance helpers (edit once)
 # Deterministic — no RNG / significance surrogates, so re-knits reproduce every number exactly.
+# (The significance MASK is analytic AR(1) red noise — Torrence & Compo 1998 — so it too is
+#  deterministic: no make.pval / surrogates, reproducible from the tracked CSVs.)
 theme_set(theme_bw(base_size = 11) + theme(legend.position = "bottom"))
 P  <- 365              # seasonal (annual) period in days — the band we read synchrony at.
 EF <- round(sqrt(2) * P)  # Morlet e-folding (~516 d) = time support at period P. Serves as both the
@@ -113,13 +116,14 @@ band_rows <- function(wc) which(abs(wc$Period - P) <= 0.05 * P)  # the few scale
 # Horizontal dashed guides at a week / month / year. The period axis is log2, so a period p sits
 # at y = log2(p); graphics.reset = FALSE keeps wc.image's coordinate system live to annotate over.
 wc_marks <- c("1 wk" = 7, "1 mo" = 30, "3 mo" = 91, "1 yr" = 365)
-plot_wc <- function(wc, main) {
+plot_wc <- function(wc, df, main) {
   op <- par(bg = "white", fg = "black", col.axis = "black", col.lab = "black", col.main = "black")
   on.exit(par(op))
   wc.image(wc, which.image = "wc", plot.arrow = TRUE, plot.contour = FALSE,
            color.key = "interval", timelab = "time (days)", periodlab = "period (days)",
            legend.params = list(lab = "wavelet coherence"), main = main, graphics.reset = FALSE)
   abline(h = log2(wc_marks), lty = 2, col = "black", lwd = 1.4)                 # week / month / year guides
+  add_xpower_contour(df, wc)             # red-noise 95% CROSS-POWER significance (T&C 1998; kernel)
   usr <- par("usr")
   text(x = usr[1] + 0.01 * (usr[2] - usr[1]), y = log2(wc_marks), labels = names(wc_marks),
        adj = c(0, -0.4), font = 2, cex = 0.9, col = "black")
@@ -346,8 +350,12 @@ emit_table <- function(sm, caption)
 # Time-averaged cross-wavelet power as a function of PERIOD (rows are periods, cols are times in
 # the wc matrices → rowMeans collapses time). Shared P–Q power should peak at SHORT (event) periods,
 # not at the annual band — the honest picture of an episodic driver.
-xpower_spectrum <- function(wc, site)
-  tibble(site = site, period = wc$Period, power = rowMeans(wc$Power.xy))
+# `power` = the observed time-mean cross-power; `ref` = the red-noise 95% level for that time-mean
+# (analytic AR(1), DOF-inflated for the averaging — see R/wavelet_kernel.R xpower_sig_ref_tavg).
+# n_a = the number of time columns rowMeans averages over (the full record).
+xpower_spectrum <- function(wc, df, site)
+  tibble(site = site, period = wc$Period, power = rowMeans(wc$Power.xy),
+         ref  = xpower_sig_ref_tavg(df, wc, n_a = ncol(wc$Power.xy)))
 
 # Annual-harmonic R² (cheap OLS on cos/sin at 365 d): how much of each channel's variance is a
 # clean annual cycle. Precip ≈ 0 (aseasonal driver) is the numeric root of the phase degeneracy.
@@ -403,14 +411,16 @@ the phase *difference* wanders across `±π`, which the raw `φ→lag` map rende
 (a circular quantity on a linear axis, not a six-month delay). Un-normalized cross-power vs period
 shows *where the shared oscillation actually is* — and, crucially, it **differs by site**.
 
-```{r xpower-spectrum, fig.height=4.2, fig.cap=fig_n("Time-averaged cross-wavelet power vs period (log x), per site. The annual band (dashed, 365 d) carries a genuine shared-power peak at hjandrews (dominant) and fernow (alongside a short-period event shoulder), but at hbef the shared power is broadband and event-heavy with only a weak annual bump. Un-normalized cross-power thus separates a real annual coupling from the degenerate case — a distinction the saturated coherence (≈1 everywhere) cannot make.")}
-xps <- bind_rows(Map(xpower_spectrum, WC, names(WC))) %>% mutate(site = factor(site, sites))
+```{r xpower-spectrum, fig.height=4.2, fig.cap=fig_n("Time-averaged cross-wavelet power vs period (log x), per site, with the red-noise 95% reference (dashed orange). The reference is the analytic AR(1) significance level for a TIME-AVERAGED cross-power (Torrence & Compo 1998, DOF-inflated for the averaging; calibrated against seeded surrogates — tight at event periods, mildly conservative at the annual band). Observed power (green) ABOVE it is shared oscillation beyond what two independent red-noise series would produce. The annual band (grey dashed, 365 d) carries a genuine shared-power peak at hjandrews (dominant, clears the reference) and fernow (alongside a short-period event shoulder), but at hbef the shared power is broadband and event-heavy with only a weak annual bump. Un-normalized cross-power thus separates a real annual coupling from the degenerate case — a distinction the saturated coherence (≈1 everywhere) cannot make.")}
+xps <- bind_rows(Map(xpower_spectrum, WC, D, names(WC))) %>% mutate(site = factor(site, sites))
 ggplot(xps, aes(period, power)) +
   geom_vline(xintercept = P, linetype = 2, colour = "grey45") +
+  geom_line(aes(period, ref), colour = "#d94801", linetype = 2, linewidth = 0.4) +   # red-noise 95%
   geom_line(colour = "#238b45", linewidth = 0.4) +
   facet_wrap(~ site, scales = "free_y") +
   scale_x_log10(breaks = c(7, 30, 91, 365, 730), labels = c("1wk", "1mo", "3mo", "1yr", "2yr")) +
   labs(title = "Where shared power lives: time-averaged cross-power vs period",
+       subtitle = "green = observed mean cross-power · dashed orange = red-noise 95% reference",
        x = "period (days, log scale)", y = "mean cross power")
 ```
 
@@ -441,7 +451,7 @@ plot_resid(D[["hbef_w1"]], paste(label["hbef_w1"], "— model residual & its der
 ```
 
 ```{r hbef-wc, fig.height=4.6, fig.cap=fig_n("hbef_w1 — wavelet coherence spectrum (time × period). Arrows = phase; pale COI parabola = edge-unreliable. Note how normalized coherence saturates near 1 across most of the annual band.")}
-plot_wc(WC[["hbef_w1"]], paste(label["hbef_w1"], "— wavelet coherence"))
+plot_wc(WC[["hbef_w1"]], D[["hbef_w1"]], paste(label["hbef_w1"], "— wavelet coherence"))
 ```
 
 ```{r hbef-trace, fig.height=5.2, fig.cap=fig_n("hbef_w1 — band (P≈365) metrics through time; COI edges blanked, phases shaded.")}
@@ -468,7 +478,7 @@ plot_resid(D[["hjandrews_GSWS10"]], paste(label["hjandrews_GSWS10"], "— model 
 ```
 
 ```{r hja-wc, fig.height=4.6, fig.cap=fig_n("hjandrews_GSWS10 — wavelet coherence spectrum.")}
-plot_wc(WC[["hjandrews_GSWS10"]], paste(label["hjandrews_GSWS10"], "— wavelet coherence"))
+plot_wc(WC[["hjandrews_GSWS10"]], D[["hjandrews_GSWS10"]], paste(label["hjandrews_GSWS10"], "— wavelet coherence"))
 ```
 
 ```{r hja-trace, fig.height=5.2, fig.cap=fig_n("hjandrews_GSWS10 — band metrics through time.")}
@@ -496,7 +506,7 @@ plot_resid(D[["fernow_WS-3"]], paste(label["fernow_WS-3"], "— model residual &
 ```
 
 ```{r fw3-wc, fig.height=4.6, fig.cap=fig_n("fernow_WS-3 — wavelet coherence spectrum.")}
-plot_wc(WC[["fernow_WS-3"]], paste(label["fernow_WS-3"], "— wavelet coherence"))
+plot_wc(WC[["fernow_WS-3"]], D[["fernow_WS-3"]], paste(label["fernow_WS-3"], "— wavelet coherence"))
 ```
 
 ```{r fw3-trace, fig.height=5.2, fig.cap=fig_n("fernow_WS-3 — band metrics through time.")}
@@ -524,7 +534,7 @@ plot_resid(D[["fernow_WS-5"]], paste(label["fernow_WS-5"], "— model residual &
 ```
 
 ```{r fw5-wc, fig.height=4.6, fig.cap=fig_n("fernow_WS-5 — wavelet coherence spectrum.")}
-plot_wc(WC[["fernow_WS-5"]], paste(label["fernow_WS-5"], "— wavelet coherence"))
+plot_wc(WC[["fernow_WS-5"]], D[["fernow_WS-5"]], paste(label["fernow_WS-5"], "— wavelet coherence"))
 ```
 
 ```{r fw5-trace, fig.height=5.2, fig.cap=fig_n("fernow_WS-5 — band metrics through time.")}
