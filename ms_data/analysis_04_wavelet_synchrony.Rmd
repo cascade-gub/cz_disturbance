@@ -292,10 +292,13 @@ D <- lapply(sites, function(s)
     mutate(phase = factor(phase, c("pre", "disturbance", "post")),
            log_response = log(response)))
 names(D) <- sites
-# section labels come from the tracked CSVs themselves (disturbance/class carried by the prep) —
+# plot labels come from the tracked CSVs themselves (site/disturbance/date carried by the prep) —
 # no dependency on any external file, so 04 builds from the committed *__series_daily.csv alone.
+# Format: "<site> <disturbance-year> <disturbance>", e.g. "fernow_WS-5 2007 timber_harvest".
 label <- setNames(vapply(D, function(d)
-  sprintf("%s (%s, %s)", d$site[1], d$disturbance[1], d$class[1]), character(1)), sites)
+  sprintf("%s %s %s", d$site[1],
+          format(min(d$date[d$phase == "disturbance"]), "%Y"), d$disturbance[1]),
+  character(1)), sites)
 ```
 
 ```{r derive}
@@ -328,7 +331,7 @@ plot_resid(D[["hbef_w1"]], paste(label["hbef_w1"], "— model residual & its der
 ```
 
 ```{r hbef-wc, fig.height=4.6, fig.cap=fig_n("hbef_w1 — wavelet coherence spectrum (time × period). Arrows = phase; pale COI parabola = edge-unreliable. Note how normalized coherence saturates near 1 across most of the annual band.")}
-plot_wc(WC[["hbef_w1"]], "hbef_w1 — wavelet coherence")
+plot_wc(WC[["hbef_w1"]], paste(label["hbef_w1"], "— wavelet coherence"))
 ```
 
 ```{r hbef-trace, fig.height=5.2, fig.cap=fig_n("hbef_w1 — band (P≈365) metrics through time; COI edges blanked, phases shaded.")}
