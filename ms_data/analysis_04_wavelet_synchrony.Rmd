@@ -359,15 +359,18 @@ cat(kable(delta %>% transmute(site, metric = metric_labs[as.character(metric)],
           digits = 2, caption = "pre → post change in band metrics, all sites (delta_se = propagated ±1 SE)"), sep = "\n")
 ```
 
-```{r summary-fig, fig.height=4.5, fig.cap=fig_n("Post − pre change per site, faceted by band metric (free y), ±1 propagated SE. The lesson from analysis II carries over: coherence barely moves anywhere (it saturates on real data too), so if anything registers it is in cross-power / amplitude.")}
+```{r summary-fig, fig.height=5, fig.cap=fig_n("Post − pre change per site, faceted by band metric (free y), ±1 propagated SE. The lesson from analysis II carries over: coherence barely moves anywhere (it saturates on real data too), so if anything registers it is in cross-power / amplitude.")}
+# x-axis labels = site + disturbance (the `label` vector), wrapped to fit; matches the section headers.
+sitelab <- function(s) vapply(s, function(x) paste(strwrap(label[[x]], 17), collapse = "\n"), character(1))
 ggplot(delta, aes(site, delta, fill = site)) +
   geom_col() +
   geom_errorbar(aes(ymin = delta - delta_se, ymax = delta + delta_se), width = 0.25, colour = "black", na.rm = TRUE) +
   geom_hline(yintercept = 0, colour = "grey70") +
   facet_wrap(~ metric, scales = "free_y", labeller = as_labeller(metric_labs)) +
   scale_fill_brewer(palette = "Set2", guide = "none") +
+  scale_x_discrete(labels = sitelab) +
   labs(title = "Post − pre change by band metric (free y axes; ±1 SE)", x = NULL, y = "post − pre") +
-  theme(axis.text.x = element_text(angle = 40, hjust = 1))
+  theme(axis.text.x = element_text(size = 7))
 ```
 
 **Takeaways — the native wavelet view on real synchrony, next to analysis III.** The lesson

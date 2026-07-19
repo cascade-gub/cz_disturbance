@@ -154,6 +154,15 @@ differences from P→Q, all forced by nitrate being **irregular grab samples** (
 - **Coherence saturates.** On real data WaveletComp's normalized, smoothed coherence sits ≈0.9–1
   across the whole record at every site — as the synthetic *Desync* case warned, coherence alone
   is not a usable discriminator; cross-power & band amplitude carry the real story (IV).
+- **Per-site plot labels = site + disturbance, never the bare site code.** Every per-site plot
+  (facet strips, x-axis ticks, panel titles) is labelled with the `label` vector so each panel is
+  self-describing and matches its section header. `label` is built in each analysis's `load` chunk
+  (04: `"<site> <year> <disturbance>"`; 05: `"<site> (<disturbance>, <class>)"`). Reuse it on any
+  new per-site or pre/post plot: `labeller = as_labeller(label)` for facets,
+  `scale_x_discrete(labels = label)` for a site x-axis, `paste(label[s], "…")` for a title. This
+  applies to **all pre/post plots** (per-site bars — via title; the pre-vs-post cross-power spectrum
+  — via facet; the cross-site post−pre summary — via x-axis). Synthetic `analysis_02` is exempt:
+  its panels are scenarios (Shift/Desync/Return), not sites, and are already self-describing.
 - **Shared kernel (04/05, and syn 02).** ALL wavelet helpers — `wco`, `band_trace`, `block_stat`,
   `wave_summary`, `plot_*`, `fit_pre`, `resid_trace`, the significance helpers — live in
   `../R/wavelet_kernel.R` and are built per-notebook via `make_wavelet_kernel(cfg)` +
