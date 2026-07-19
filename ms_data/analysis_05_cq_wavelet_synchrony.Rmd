@@ -172,7 +172,7 @@ ggplot(xps, aes(period, power, colour = phase)) +
   geom_vline(xintercept = P_DAYS, linetype = 2, colour = "grey45") +
   geom_line(aes(period, ref, group = phase), colour = "grey55", linetype = 2, linewidth = 0.3) +  # red-noise 95%, per phase
   geom_line(linewidth = 0.5) +
-  facet_wrap(~ id, scales = "free_y") +
+  facet_wrap(~ id, scales = "free_y", labeller = as_labeller(label)) +   # strip = site + disturbance (matches section headers)
   scale_colour_manual(values = c(pre = "#3182bd", post = "#e6550d")) +
   scale_x_log10(breaks = c(30, 91, 365, 730), labels = c("1mo", "3mo", "1yr", "2yr")) +
   labs(title = "Where shared C–Q power lives: time-averaged cross-power vs period, pre vs post",
