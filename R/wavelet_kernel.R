@@ -322,6 +322,21 @@ make_wavelet_kernel <- function(cfg) {
       }
     }
     add_xpower_contour(df, wc)                     # red-noise 95% cross-power significance (Part 1)
+    # Mark WHEN the disturbance occurred, on the time axis (wc$axis.1 = 1:nc = df rows). Use the
+    # `disturbance`-phase column(s): one bold line for a single step, the onset/end pair for a span
+    # (fernow_WS-5). The binned C-Q grids (05) carry NO disturbance bin for a single-instant event —
+    # it is the pre→post boundary — so fall back to the midpoint of (last pre, first post). Drawn
+    # last so it reads over the field, arrows and contour.
+    td <- which(df$phase == "disturbance")
+    if (!length(td)) {
+      pre <- which(df$phase == "pre"); post <- which(df$phase == "post")
+      if (length(pre) && length(post)) td <- (max(pre) + min(post)) / 2
+    }
+    if (length(td)) {
+      abline(v = range(td), lty = 1, col = "black", lwd = 2)
+      text(x = mean(range(td)), y = par("usr")[4], labels = "disturbance",
+           adj = c(0.5, 1.3), font = 2, cex = 0.9, col = "black")
+    }
   }
 
   # ---- time-resolved band metrics + settled bars + table -------------------------------------
