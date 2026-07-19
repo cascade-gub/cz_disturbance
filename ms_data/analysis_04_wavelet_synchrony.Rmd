@@ -193,17 +193,21 @@ the phase *difference* wanders across `±π`, which the raw `φ→lag` map rende
 (a circular quantity on a linear axis, not a six-month delay). Un-normalized cross-power vs period
 shows *where the shared oscillation actually is* — and, crucially, it **differs by site**.
 
-```{r xpower-spectrum, fig.height=4.2, fig.cap=fig_n("Time-averaged cross-wavelet power vs period (log x), per site, with the red-noise 95% reference (dashed orange). The reference is the analytic AR(1) significance level for a TIME-AVERAGED cross-power (Torrence & Compo 1998, DOF-inflated for the averaging; calibrated against seeded surrogates — tight at event periods, mildly conservative at the annual band). Observed power (green) ABOVE it is shared oscillation beyond what two independent red-noise series would produce. The annual band (grey dashed, 365 d) carries a genuine shared-power peak at hjandrews (dominant, clears the reference) and fernow (alongside a short-period event shoulder), but at hbef the shared power is broadband and event-heavy with only a weak annual bump. Un-normalized cross-power thus separates a real annual coupling from the degenerate case — a distinction the saturated coherence (≈1 everywhere) cannot make.")}
-xps <- bind_rows(Map(xpower_spectrum, WC, D, names(WC))) %>% mutate(id = factor(id, sites))  # kernel returns `id`
-ggplot(xps, aes(period, power)) +
+```{r xpower-spectrum, fig.height=4.4, fig.cap=fig_n("Time-averaged cross-wavelet power vs period (log x), per site, split PRE vs POST (solid blue / orange), each averaged over that phase's settled EF-buffered window — the same windows the pre/post tables use, so this is the spectral view of the settled comparison, free of COI/disturbance bleed. Dashed grey = the red-noise 95% reference (analytic AR(1), DOF-inflated per window; Torrence & Compo 1998 — tight at event periods, mildly conservative at the annual band). Power ABOVE it is shared oscillation beyond independent red noise; a pre→post gap at a period is where the disturbance moved shared power there. The annual band (grey dashed vertical, 365 d) carries a genuine shared-power peak at hjandrews (dominant) and fernow, but at hbef the shared power is broadband and event-heavy with only a weak annual bump — the degenerate case un-normalized cross-power separates from a real annual coupling, a distinction the saturated coherence (≈1 everywhere) cannot make.")}
+# Split PRE vs POST (EF-buffered settled windows — the same wave_summary uses); kernel returns
+# `id`, `phase`, `period`, `power`, `ref`.
+xps <- bind_rows(Map(function(wc, df, id) xpower_spectrum(wc, df, id, split = TRUE), WC, D, names(WC))) %>%
+  mutate(id = factor(id, sites))
+ggplot(xps, aes(period, power, colour = phase)) +
   geom_vline(xintercept = P, linetype = 2, colour = "grey45") +
-  geom_line(aes(period, ref), colour = "#d94801", linetype = 2, linewidth = 0.4) +   # red-noise 95%
-  geom_line(colour = "#238b45", linewidth = 0.4) +
+  geom_line(aes(period, ref, group = phase), colour = "grey55", linetype = 2, linewidth = 0.3) +  # red-noise 95%, per phase
+  geom_line(linewidth = 0.5) +
   facet_wrap(~ id, scales = "free_y") +
+  scale_colour_manual(values = c(pre = "#3182bd", post = "#e6550d")) +
   scale_x_log10(breaks = c(7, 30, 91, 365, 730), labels = c("1wk", "1mo", "3mo", "1yr", "2yr")) +
-  labs(title = "Where shared power lives: time-averaged cross-power vs period",
-       subtitle = "green = observed mean cross-power · dashed orange = red-noise 95% reference",
-       x = "period (days, log scale)", y = "mean cross power")
+  labs(title = "Where shared power lives: time-averaged cross-power vs period, pre vs post",
+       subtitle = "solid = observed mean cross-power (pre / post) · dashed grey = red-noise 95% reference",
+       colour = "phase", x = "period (days, log scale)", y = "mean cross power")
 ```
 
 ```{r annual-r2, results='asis'}

@@ -388,10 +388,30 @@ make_wavelet_kernel <- function(cfg) {
 
   # ---- "where does the shared power live" diagnostic ----------------------------------------
   # Time-averaged cross-power vs period, plus the red-noise 95% reference (Part 1). `period` is in
-  # the plotted unit: days (Period x step). n_a = the columns rowMeans averages over.
-  xpower_spectrum <- function(wc, df, id, step = 1)
-    tibble(id = id, period = wc$Period * step, power = rowMeans(wc$Power.xy),
-           ref = xpower_sig_ref_tavg(df, wc, n_a = ncol(wc$Power.xy)))
+  # the plotted unit: days (Period x step). n_a = the number of time columns rowMeans averages over.
+  #   split = FALSE → one curve over the whole record (id, period, power, ref).
+  #   split = TRUE  → one curve per settled phase (adds a `phase` pre/post column), each averaged
+  #     over that phase's EF-BUFFERED window — the SAME windows wave_summary uses for the tables, so
+  #     the pre/post spectra are directly comparable to the settled pre/post numbers and are free of
+  #     COI/disturbance bleed (a band wavelet near the event would otherwise mix pre and post). The
+  #     reference uses each window's own n_a (so a shorter window ⇒ higher, more conservative level);
+  #     alpha stays whole-record (the null red-noise process is a series property).
+  xpower_spectrum <- function(wc, df, id, step = 1, split = FALSE) {
+    per <- wc$Period * step
+    if (!split)
+      return(tibble(id = id, period = per, power = rowMeans(wc$Power.xy),
+                    ref = xpower_sig_ref_tavg(df, wc, n_a = ncol(wc$Power.xy))))
+    EF <- round(sqrt(2) * P_days / step); N <- nrow(df)
+    ds <- min(df$time[df$phase == "disturbance"])
+    de <- if (has_tr) max(df$time[df$phase == "transition"]) else max(df$time[df$phase == "disturbance"])
+    wins <- list(pre  = df$time >= EF      & df$time <= ds - EF,
+                 post = df$time >= de + EF & df$time <= N  - EF)
+    one <- function(sel, ph) tibble(id = id, phase = ph, period = per,
+      power = rowMeans(wc$Power.xy[, sel, drop = FALSE]),
+      ref   = xpower_sig_ref_tavg(df, wc, n_a = sum(sel)))
+    bind_rows(one(wins$pre, "pre"), one(wins$post, "post")) %>%
+      mutate(phase = factor(phase, c("pre", "post")))
+  }
 
   list(P_days = P_days, metric_labs = metric_labs, phase_fill = phase_fill, bar_fill = bar_fill,
        CMEAN = CMEAN, smooth_ma = smooth_ma, band_rows = band_rows, wco = wco,
